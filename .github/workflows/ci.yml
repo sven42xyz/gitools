@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            install: brew install libgit2
+          - os: ubuntu-latest
+            install: sudo apt-get update && sudo apt-get install -y libgit2-dev
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libgit2
+        run: ${{ matrix.install }}
+
+      - name: Build & test
+        run: make test

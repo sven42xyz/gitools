@@ -1,5 +1,7 @@
 # gitls
 
+[![CI](https://github.com/sven42xyz/gitools/actions/workflows/ci.yml/badge.svg)](https://github.com/sven42xyz/gitools/actions/workflows/ci.yml)
+
 A fast, minimal tool to inspect and act on multiple git repositories.
 
 ```

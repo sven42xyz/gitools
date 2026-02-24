@@ -35,11 +35,22 @@ $(TARGET): $(OBJS)
 %.o: %.c gitools.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+TEST_OBJS = repo.o display.o scan.o
+
+test: $(TARGET) tests/unit
+	@printf "=== Unit tests ===\n"
+	@./tests/unit
+	@printf "\n=== Integration tests ===\n"
+	@sh tests/integration.sh
+
+tests/unit: tests/unit.c $(TEST_OBJS)
+	$(CC) $(CFLAGS) -o $@ tests/unit.c $(TEST_OBJS) $(LDFLAGS)
+
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -f $(TARGET) $(OBJS) tests/unit
 
 install: $(TARGET)
 	install -d $(PREFIX)/bin
 	install -m 755 $(TARGET) $(PREFIX)/bin/$(TARGET)
 
-.PHONY: all clean install
+.PHONY: all clean install test

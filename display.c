@@ -32,7 +32,7 @@ const char *relative_time(git_time_t t) {
 }
 
 /* ── UTF-8 display width ───────────────────────────────────────────────────── */
-static int utf8_width(const char *s) {
+int utf8_width(const char *s) {
     int w = 0;
     for (const unsigned char *p = (const unsigned char *)s; *p; ) {
         if      (*p < 0x80) { p += 1; }

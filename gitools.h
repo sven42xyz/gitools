@@ -69,6 +69,7 @@ void process_repo(const char *path);
 
 /* display.c */
 const char *C(const char *color);
+int         utf8_width(const char *s);
 const char *relative_time(git_time_t t);
 void        write_col(const char *s, int width);
 void        print_header(void);
