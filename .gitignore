@@ -1,3 +1,4 @@
 gitls
 *.o
 tests/unit
+.vscode/
