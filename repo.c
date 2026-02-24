@@ -16,7 +16,9 @@ static size_t g_repo_cap = 0;
 void collect_repo(const Repo *r) {
     if (g_repo_count >= g_repo_cap) {
         g_repo_cap = g_repo_cap ? g_repo_cap * 2 : 32;
-        g_repos = realloc(g_repos, g_repo_cap * sizeof(Repo));
+        Repo *tmp = realloc(g_repos, g_repo_cap * sizeof(Repo));
+        if (!tmp) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+        g_repos = tmp;
     }
     g_repos[g_repo_count++] = *r;
 }
@@ -24,7 +26,7 @@ void collect_repo(const Repo *r) {
 /* ── Branch ────────────────────────────────────────────────────────────────── */
 static void fill_branch(Repo *r, git_repository *repo) {
     if (git_repository_head_unborn(repo) == 1) {
-        strncpy(r->branch, "(unborn)", sizeof(r->branch)-1);
+        snprintf(r->branch, sizeof(r->branch), "(unborn)");
         return;
     }
 
@@ -38,22 +40,21 @@ static void fill_branch(Repo *r, git_repository *repo) {
                 snprintf(r->branch, sizeof(r->branch), "(%s)", hex);
                 git_object_free(obj);
             } else {
-                strncpy(r->branch, "(detached)", sizeof(r->branch)-1);
+                snprintf(r->branch, sizeof(r->branch), "(detached)");
             }
             git_reference_free(head);
         } else {
-            strncpy(r->branch, "(detached)", sizeof(r->branch)-1);
+            snprintf(r->branch, sizeof(r->branch), "(detached)");
         }
         return;
     }
 
     git_reference *head = NULL;
     if (git_repository_head(&head, repo) != 0) {
-        strncpy(r->branch, "(?)", sizeof(r->branch)-1);
+        snprintf(r->branch, sizeof(r->branch), "(?)");
         return;
     }
-    strncpy(r->branch, git_reference_shorthand(head), sizeof(r->branch)-1);
-    r->branch[sizeof(r->branch)-1] = '\0';
+    snprintf(r->branch, sizeof(r->branch), "%s", git_reference_shorthand(head));
     git_reference_free(head);
 }
 
@@ -123,9 +124,11 @@ static void fill_ahead_behind(Repo *r, git_repository *repo) {
 
     git_object *upstream_obj = NULL;
     if (git_reference_peel(&upstream_obj, upstream_ref, GIT_OBJECT_COMMIT) == 0) {
-        git_graph_ahead_behind(&r->ahead, &r->behind, repo,
-                               git_object_id(local_obj), git_object_id(upstream_obj));
-        r->has_remote = 1;
+        if (git_graph_ahead_behind(&r->ahead, &r->behind, repo,
+                                   git_object_id(local_obj),
+                                   git_object_id(upstream_obj)) == 0) {
+            r->has_remote = 1;
+        }
         git_object_free(upstream_obj);
     }
 
@@ -137,6 +140,8 @@ static void fill_ahead_behind(Repo *r, git_repository *repo) {
 
 /* ── Last commit time ──────────────────────────────────────────────────────── */
 static void fill_last_commit(Repo *r, git_repository *repo) {
+    if (git_repository_head_unborn(repo) == 1) return;  /* no commits yet */
+
     git_reference *head = NULL;
     if (git_repository_head(&head, repo) != 0) return;
 
@@ -158,6 +163,8 @@ static SwitchResult do_switch(git_repository *repo, const Repo *r,
     if (git_branch_lookup(&ref, repo, target, GIT_BRANCH_LOCAL) != 0)
         return SR_NOT_FOUND;
 
+    /* Untracked files are intentionally not checked: GIT_CHECKOUT_SAFE
+     * leaves untracked files alone, so they never block a switch. */
     if (r->staged || r->modified) {
         git_reference_free(ref);
         return SR_DIRTY;
@@ -167,7 +174,7 @@ static SwitchResult do_switch(git_repository *repo, const Repo *r,
     git_object *target_obj = NULL;
     if (git_reference_peel(&target_obj, ref, GIT_OBJECT_COMMIT) != 0) {
         git_reference_free(ref);
-        return SR_DIRTY;
+        return SR_ERROR;
     }
     git_reference_free(ref);
 
@@ -178,13 +185,14 @@ static SwitchResult do_switch(git_repository *repo, const Repo *r,
     };
     int err = git_checkout_tree(repo, target_obj, &opts);
     git_object_free(target_obj);
-    if (err != 0) return SR_DIRTY;
+    if (err != 0) return SR_ERROR;
 
     /* Step 2: point HEAD at the target branch. */
-    char refname[512];
-    snprintf(refname, sizeof(refname), "refs/heads/%s", target);
+    char refname[sizeof(opt_switch_branch) + 12];
+    int rn = snprintf(refname, sizeof(refname), "refs/heads/%s", target);
+    if (rn <= 0 || rn >= (int)sizeof(refname)) return SR_ERROR;
     if (git_repository_set_head(repo, refname) != 0)
-        return SR_DIRTY;
+        return SR_ERROR;
 
     return SR_SWITCHED;
 }
@@ -192,7 +200,10 @@ static SwitchResult do_switch(git_repository *repo, const Repo *r,
 /* ── process_repo ──────────────────────────────────────────────────────────── */
 void process_repo(const char *path) {
     git_repository *repo = NULL;
-    if (git_repository_open(&repo, path) != 0) return;
+    if (git_repository_open(&repo, path) != 0) {
+        fprintf(stderr, "Warning: could not open repository at '%s'\n", path);
+        return;
+    }
 
     Repo r;
     memset(&r, 0, sizeof(r));

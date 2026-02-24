@@ -1,5 +1,6 @@
 CC      = cc
 TARGET  = gitools
+PREFIX  = /usr/local
 SRCS    = main.c repo.c display.c scan.c
 OBJS    = $(SRCS:.c=.o)
 
@@ -20,7 +21,7 @@ LDFLAGS = $(LIBGIT2_LIBS)
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
 %.o: %.c gitools.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -29,6 +30,7 @@ clean:
 	rm -f $(TARGET) $(OBJS)
 
 install: $(TARGET)
-	install -m 755 $(TARGET) /usr/local/bin/$(TARGET)
+	install -d $(PREFIX)/bin
+	install -m 755 $(TARGET) $(PREFIX)/bin/$(TARGET)
 
 .PHONY: all clean install

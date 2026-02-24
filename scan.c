@@ -10,7 +10,7 @@
 
 #include "gitools.h"
 
-static const char *SKIP_DIRS[] = { "vendor", "node_modules", ".git", NULL };
+static const char * const SKIP_DIRS[] = { "vendor", "node_modules", ".git", NULL };
 
 static int should_skip(const char *name) {
     for (int i = 0; SKIP_DIRS[i]; i++)
@@ -24,9 +24,11 @@ void find_repos(const char *path, int depth) {
 
     /* if this directory is a git repo, process it then keep recursing */
     char git_path[PATH_MAX];
-    snprintf(git_path, sizeof(git_path), "%s/.git", path);
-    struct stat st;
-    if (stat(git_path, &st) == 0) process_repo(path);
+    int n = snprintf(git_path, sizeof(git_path), "%s/.git", path);
+    if (n > 0 && n < (int)sizeof(git_path)) {
+        struct stat st;
+        if (stat(git_path, &st) == 0) process_repo(path);
+    }
 
     DIR *dir = opendir(path);
     if (!dir) return;
@@ -37,12 +39,13 @@ void find_repos(const char *path, int depth) {
         if (should_skip(ent->d_name)) continue;
 
         char sub[PATH_MAX];
-        snprintf(sub, sizeof(sub), "%s/%s", path, ent->d_name);
+        int m = snprintf(sub, sizeof(sub), "%s/%s", path, ent->d_name);
+        if (m <= 0 || m >= (int)sizeof(sub)) continue;  /* path too long, skip */
 
         struct stat sub_st;
+        /* lstat: S_ISDIR is false for symlinks, so symlinks are already skipped */
         if (lstat(sub, &sub_st) != 0) continue;
         if (!S_ISDIR(sub_st.st_mode)) continue;
-        if (S_ISLNK(sub_st.st_mode))  continue;  /* skip symlinks to avoid loops */
 
         find_repos(sub, depth + 1);
     }

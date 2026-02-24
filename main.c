@@ -6,15 +6,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <stdbool.h>
 
 #include <git2.h>
 #include "gitools.h"
 
 /* ── Global options ────────────────────────────────────────────────────────── */
-int  opt_max_depth        = 5;
-int  opt_all              = 0;
-int  opt_no_color         = 0;
-int  opt_switch           = 0;
+int  opt_max_depth          = 5;
+bool opt_all                = false;
+bool opt_no_color           = false;
+bool opt_switch             = false;
 char opt_switch_branch[256] = "";
 
 /* ── Usage ─────────────────────────────────────────────────────────────────── */
@@ -43,16 +44,18 @@ int main(int argc, char **argv) {
             usage(argv[0]);
             return 0;
         } else if (strcmp(argv[i], "-a") == 0) {
-            opt_all = 1;
+            opt_all = true;
         } else if (strcmp(argv[i], "--no-color") == 0) {
-            opt_no_color = 1;
+            opt_no_color = true;
         } else if (strcmp(argv[i], "-d") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -d requires a number\n"); return 1; }
-            opt_max_depth = atoi(argv[++i]);
+            char *end;
+            opt_max_depth = (int)strtol(argv[++i], &end, 10);
+            if (*end != '\0') { fprintf(stderr, "Error: -d requires a valid number\n"); return 1; }
             if (opt_max_depth < 0) opt_max_depth = 0;
         } else if (strcmp(argv[i], "-s") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -s requires a branch name\n"); return 1; }
-            opt_switch = 1;
+            opt_switch = true;
             strncpy(opt_switch_branch, argv[++i], sizeof(opt_switch_branch)-1);
         } else if (argv[i][0] != '-') {
             scan_dir = argv[i];
@@ -66,16 +69,18 @@ int main(int argc, char **argv) {
     char abs_dir[PATH_MAX];
     if (realpath(scan_dir, abs_dir) == NULL) {
         fprintf(stderr, "Error: cannot resolve path '%s'\n", scan_dir);
+        free(g_repos);
         return 1;
     }
 
     git_libgit2_init();
     find_repos(abs_dir, 0);
 
+    /* ── status table header (always shown first) ── */
+    printf("%sScanning:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
+
     if (opt_switch) print_switch_summary();
 
-    /* ── status table ── */
-    printf("%sScanning:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
     print_header();
 
     int total = 0, clean = 0, dirty = 0, behind = 0;

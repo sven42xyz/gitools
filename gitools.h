@@ -4,6 +4,7 @@
 #pragma once
 
 #include <limits.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <git2.h>
 
@@ -30,8 +31,9 @@ typedef enum {
     SR_NA = 0,
     SR_SWITCHED,
     SR_ALREADY,
-    SR_DIRTY,
-    SR_NOT_FOUND,
+    SR_DIRTY,       /* skipped: staged or modified changes */
+    SR_NOT_FOUND,   /* branch doesn't exist in this repo */
+    SR_ERROR,       /* checkout or ref operation failed */
 } SwitchResult;
 
 /* ── Repo ──────────────────────────────────────────────────────────────────── */
@@ -50,9 +52,9 @@ typedef struct {
 
 /* ── Global options (defined in main.c) ───────────────────────────────────── */
 extern int  opt_max_depth;
-extern int  opt_all;
-extern int  opt_no_color;
-extern int  opt_switch;
+extern bool opt_all;
+extern bool opt_no_color;
+extern bool opt_switch;
 extern char opt_switch_branch[256];
 
 /* ── Repo collection (defined in repo.c) ──────────────────────────────────── */

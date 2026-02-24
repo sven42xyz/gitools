@@ -3,6 +3,7 @@
  */
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <time.h>
 
@@ -18,16 +19,15 @@ const char *relative_time(git_time_t t) {
     static char buf[64];
     if (t == 0) { snprintf(buf, sizeof(buf), "no commits"); return buf; }
 
-    time_t now  = time(NULL);
-    long   diff = (long)(now - (time_t)t);
+    int64_t diff = (int64_t)time(NULL) - (int64_t)t;
     if (diff < 0) diff = 0;
 
     if (diff < 60)             snprintf(buf, sizeof(buf), "just now");
-    else if (diff < 3600)      snprintf(buf, sizeof(buf), "%ld min ago",    diff/60);
-    else if (diff < 86400)     snprintf(buf, sizeof(buf), "%ld hour%s ago", diff/3600,    diff/3600==1?"":"s");
-    else if (diff < 2592000)   snprintf(buf, sizeof(buf), "%ld day%s ago",  diff/86400,   diff/86400==1?"":"s");
-    else if (diff < 31536000)  snprintf(buf, sizeof(buf), "%ld mo ago",     diff/2592000);
-    else                       snprintf(buf, sizeof(buf), "%ld yr ago",     diff/31536000);
+    else if (diff < 3600)      snprintf(buf, sizeof(buf), "%lld min ago",    (long long)(diff/60));
+    else if (diff < 86400)     snprintf(buf, sizeof(buf), "%lld hour%s ago", (long long)(diff/3600),   diff/3600==1?"":"s");
+    else if (diff < 2592000)   snprintf(buf, sizeof(buf), "%lld day%s ago",  (long long)(diff/86400),  diff/86400==1?"":"s");
+    else if (diff < 31536000)  snprintf(buf, sizeof(buf), "%lld mo%s ago",   (long long)(diff/2592000), diff/2592000==1?"":"s");
+    else                       snprintf(buf, sizeof(buf), "%lld yr ago",     (long long)(diff/31536000));
     return buf;
 }
 
@@ -46,11 +46,13 @@ static int utf8_width(const char *s) {
 
 /* ── Column printer ────────────────────────────────────────────────────────── */
 void write_col(const char *s, int width) {
-    int len = (int)strlen(s);
-    if (len <= width)
-        printf("%-*s", width, s);
-    else
-        printf("%.*s~", width - 1, s);
+    int dw = utf8_width(s);
+    if (dw <= width) {
+        printf("%s", s);
+        printf("%-*s", width - dw, "");  /* pad remaining columns */
+    } else {
+        printf("%.*s~", width - 1, s);   /* truncate (byte-based, fine for ASCII) */
+    }
 }
 
 /* ── Sync indicator ────────────────────────────────────────────────────────── */
@@ -160,6 +162,10 @@ void print_switch_summary(void) {
                 break;
             case SR_NOT_FOUND:
                 printf("%s· branch not found%s\n", C(COL_DIM), C(COL_RESET));
+                break;
+            case SR_ERROR:
+                printf("%s✗ error (checkout failed)%s\n", C(COL_RED), C(COL_RESET));
+                skipped++;
                 break;
             default:
                 break;
