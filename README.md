@@ -36,7 +36,8 @@ Scanning: /Users/sven/projects
 ### Homebrew (macOS / Linux)
 
 ```sh
-brew install sven42xyz/tap/gitls
+brew tap sven42xyz/tap
+brew install gitls
 ```
 
 ### Build from source

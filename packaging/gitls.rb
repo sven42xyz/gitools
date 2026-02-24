@@ -9,8 +9,11 @@ class Gitls < Formula
   depends_on "libgit2"
 
   def install
+    libgit2 = Formula["libgit2"]
     system "make", "CC=#{ENV.cc}",
                    "PREFIX=#{prefix}",
+                   "LIBGIT2_CFLAGS=-I#{libgit2.opt_include}",
+                   "LIBGIT2_LIBS=-L#{libgit2.opt_lib} -lgit2",
                    "install"
   end
 
