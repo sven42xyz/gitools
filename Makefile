@@ -1,5 +1,7 @@
 CC      = cc
 TARGET  = gitools
+SRCS    = main.c repo.c display.c scan.c
+OBJS    = $(SRCS:.c=.o)
 
 # Try pkg-config first, fall back to hardcoded Homebrew paths
 PKG_CONFIG := $(shell command -v pkg-config 2>/dev/null)
@@ -7,7 +9,6 @@ ifdef PKG_CONFIG
   LIBGIT2_CFLAGS := $(shell pkg-config --cflags libgit2)
   LIBGIT2_LIBS   := $(shell pkg-config --libs libgit2)
 else
-  # Homebrew on Apple Silicon
   BREW_PREFIX    := /opt/homebrew
   LIBGIT2_CFLAGS := -I$(BREW_PREFIX)/include
   LIBGIT2_LIBS   := -L$(BREW_PREFIX)/lib -lgit2
@@ -18,11 +19,14 @@ LDFLAGS = $(LIBGIT2_LIBS)
 
 all: $(TARGET)
 
-$(TARGET): gitools.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+
+%.o: %.c gitools.h
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(OBJS)
 
 install: $(TARGET)
 	install -m 755 $(TARGET) /usr/local/bin/$(TARGET)
