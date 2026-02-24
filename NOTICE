@@ -1,0 +1,10 @@
+gitls
+Copyright (c) 2025 Sven Siepermann
+
+This software uses the following third-party libraries:
+
+libgit2 (https://libgit2.org)
+  Copyright (C) the libgit2 contributors
+  Licensed under the GNU General Public License v2 with a Linking Exception,
+  which permits linking against libgit2 from non-GPL software.
+  Full license text: https://github.com/libgit2/libgit2/blob/main/COPYING

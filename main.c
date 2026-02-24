@@ -31,6 +31,7 @@ static void usage(const char *prog) {
         "  -d <n>       Max search depth (default: 5)\n"
         "  -a           Include hidden directories\n"
         "  --no-color   Disable ANSI colours\n"
+        "  --version    Show version\n"
         "  -h, --help   Show this help\n",
         prog);
 }
@@ -42,6 +43,9 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
+            return 0;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            printf("gitls %s\n", VERSION_STRING);
             return 0;
         } else if (strcmp(argv[i], "-a") == 0) {
             opt_all = true;

@@ -1,21 +1,30 @@
 CC      = cc
-TARGET  = gitools
+TARGET  = gitls
 PREFIX  = /usr/local
+VERSION = 0.1.0
 SRCS    = main.c repo.c display.c scan.c
 OBJS    = $(SRCS:.c=.o)
 
-# Try pkg-config first, fall back to hardcoded Homebrew paths
+# Detect OS
+UNAME := $(shell uname)
+
+# Try pkg-config first (preferred on all platforms)
 PKG_CONFIG := $(shell command -v pkg-config 2>/dev/null)
 ifdef PKG_CONFIG
   LIBGIT2_CFLAGS := $(shell pkg-config --cflags libgit2)
   LIBGIT2_LIBS   := $(shell pkg-config --libs libgit2)
-else
+else ifeq ($(UNAME), Darwin)
+  # macOS without pkg-config: fall back to Homebrew
   BREW_PREFIX    := /opt/homebrew
   LIBGIT2_CFLAGS := -I$(BREW_PREFIX)/include
   LIBGIT2_LIBS   := -L$(BREW_PREFIX)/lib -lgit2
+else
+  # Linux without pkg-config: assume system-wide install
+  LIBGIT2_CFLAGS := -I/usr/include
+  LIBGIT2_LIBS   := -lgit2
 endif
 
-CFLAGS  = -std=c11 -Wall -Wextra -O2 $(LIBGIT2_CFLAGS)
+CFLAGS  = -std=c11 -Wall -Wextra -O2 $(LIBGIT2_CFLAGS) -DVERSION_STRING=\"$(VERSION)\"
 LDFLAGS = $(LIBGIT2_LIBS)
 
 all: $(TARGET)

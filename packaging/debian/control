@@ -1,0 +1,17 @@
+Source: gitls
+Section: vcs
+Priority: optional
+Maintainer: Sven Siepermann <sven@siepermann.dev>
+Build-Depends: debhelper-compat (= 13), libgit2-dev
+Standards-Version: 4.6.0
+Homepage: https://github.com/sven42xyz/gitools
+Rules-Requires-Root: no
+
+Package: gitls
+Architecture: any
+Depends: libgit2-1.7 | libgit2-1.1 | libgit2-1.3 | libgit2 (>= 1.0), ${shlibs:Depends}, ${misc:Depends}
+Description: A fast, minimal tool to inspect and act on multiple git repositories
+ gitls recursively scans a directory for git repositories and displays
+ their status in a compact table: branch name, staged/modified/untracked
+ file counts, ahead/behind remote, and relative last-commit time.
+ It also supports bulk branch switching with the -s flag.
