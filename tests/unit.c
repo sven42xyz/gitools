@@ -10,11 +10,16 @@
 #include "../gitools.h"
 
 /* globals normally defined in main.c */
-int  opt_max_depth          = 5;
-bool opt_all                = false;
-bool opt_no_color           = true;   /* no colour in tests */
-bool opt_switch             = false;
-char opt_switch_branch[256] = "";
+int    opt_max_depth             = 5;
+bool   opt_all                   = false;
+bool   opt_no_color              = true;   /* no colour in tests */
+bool   opt_switch                = false;
+char   opt_switch_branch[256]    = "";
+bool   opt_fetch                 = false;
+bool   opt_pull                  = false;
+char   opt_default_dir[PATH_MAX] = "";
+char **opt_extra_skip            = NULL;
+size_t opt_extra_skip_count      = 0;
 
 static int passed = 0, failed = 0;
 

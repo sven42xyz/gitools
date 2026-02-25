@@ -2,7 +2,7 @@ CC      = cc
 TARGET  = gitls
 PREFIX  = /usr/local
 VERSION = 0.1.0
-SRCS    = main.c repo.c display.c scan.c
+SRCS    = main.c repo.c display.c scan.c config.c
 OBJS    = $(SRCS:.c=.o)
 
 # Detect OS
@@ -24,7 +24,8 @@ else
   LIBGIT2_LIBS   := -lgit2
 endif
 
-CFLAGS  = -std=c11 -Wall -Wextra -O2 -D_POSIX_C_SOURCE=200809L $(LIBGIT2_CFLAGS) -DVERSION_STRING=\"$(VERSION)\"
+DARWIN_EXTRA := $(if $(filter Darwin,$(UNAME)),-D_DARWIN_C_SOURCE,)
+CFLAGS  = -std=c11 -Wall -Wextra -O2 -D_POSIX_C_SOURCE=200809L $(DARWIN_EXTRA) $(LIBGIT2_CFLAGS) -DVERSION_STRING=\"$(VERSION)\"
 PTHREAD := $(if $(filter Linux,$(UNAME)),-lpthread,)
 LDFLAGS = $(LIBGIT2_LIBS) $(PTHREAD)
 

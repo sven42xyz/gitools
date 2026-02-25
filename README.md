@@ -18,7 +18,9 @@ Scanned: /Users/sven/projects
 
 ## Features
 
-- Branch switching across all clean repos (`-s`)
+- **Fetch** all repos from their remote (`fetch`)
+- **Pull** (fast-forward only) all clean repos (`pull`)
+- **Branch switching** across all clean repos (`-s`)
 - Recursive directory scan with configurable depth
 - Branch name (incl. detached HEAD as short SHA)
 - Staged / modified / untracked file counts
@@ -26,6 +28,8 @@ Scanned: /Users/sven/projects
 - Relative last-commit time
 - Color output (disable with `--no-color`)
 - Skips `vendor/`, `node_modules/`, `.git/` internals automatically
+- Config file `~/.gitlsrc` for persistent defaults
+- Parallel repo processing for fast scans
 
 ## Requirements
 
@@ -61,8 +65,13 @@ sudo make install        # installs to /usr/local/bin
 ## Usage
 
 ```
-gitls [OPTIONS] [DIRECTORY]
+gitls [fetch|pull] [OPTIONS] [DIRECTORY]
 
+Subcommands:
+  fetch        Fetch all repos from their remote
+  pull         Fast-forward pull all clean repos
+
+Options:
   -s <branch>  Switch all clean repos to <branch> if it exists
   -d <n>       Max search depth (default: 5)
   -a           Include hidden directories
@@ -80,6 +89,12 @@ gitls
 # Scan ~/projects, max 3 levels deep
 gitls -d 3 ~/projects
 
+# Fetch all repos
+gitls fetch ~/projects
+
+# Pull (fast-forward) all clean repos
+gitls pull ~/projects
+
 # Switch all clean repos to main
 gitls -s main ~/projects
 
@@ -87,14 +102,54 @@ gitls -s main ~/projects
 gitls --no-color ~/projects
 ```
 
+## Fetch
+
+`gitls fetch` fetches all repos from their `origin` remote and shows the updated ahead/behind status.
+
+```
+gitls fetch ~/projects
+
+Fetch results:
+
+  api-server    ✓ fetched
+  frontend      ✓ fetched
+  auth-service  · no remote
+  legacy-app    ✓ fetched
+
+  fetched 3 · up to date 0 · no remote 1
+```
+
+## Pull
+
+`gitls pull` fast-forward-pulls all clean repos. Dirty repos are skipped; diverged repos are flagged.
+
+```
+gitls pull ~/projects
+
+Pull results:
+
+  api-server    ✓ pulled
+  frontend      · up to date
+  auth-service  · no remote
+  legacy-app    ✗ skipped  (dirty)
+  infra         · not fast-forward
+
+  pulled 1 · up to date 1 · skipped 1 dirty · not fast-forward 1
+```
+
+**Rules:**
+- A repo is pulled only if it has **no staged or modified files**
+- Only fast-forward merges are performed — diverged repos are reported, never force-merged
+- Repos without a remote are listed but skipped
+
 ## Branch switching
 
-The `-s` flag switches all clean repositories to a target branch in one command — useful when working across a multi-repo project and needing to align all repos to the same branch.
+The `-s` flag switches all clean repositories to a target branch in one command.
 
 ```
 gitls -s main ~/projects
 
-Switching to branch: main
+Switched to branch: main
 
   api-server        ✓ switched
   frontend          · already on branch
@@ -109,6 +164,27 @@ Switching to branch: main
 - A repo is switched only if it has **no staged or modified files** (untracked files are left untouched)
 - If the target branch does not exist in a repo, it is silently skipped
 - After switching, the full status table is shown for all repos
+
+## Config file
+
+Create `~/.gitlsrc` to set persistent defaults:
+
+```ini
+# ~/.gitlsrc
+default_dir=~/projects
+max_depth=3
+skip_dirs=build,dist,tmp,*.egg-info
+no_color=false
+```
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `default_dir` | Directory to scan when none is given on CLI | `.` (current dir) |
+| `max_depth` | Maximum directory recursion depth | `5` |
+| `skip_dirs` | Comma-separated list of directory names to skip (glob patterns supported) | — |
+| `no_color` | Set to `true` or `1` to disable colors | `false` |
+
+CLI flags always override the config file. Set `GITLS_CONFIG=/path/to/file` to use a different config path.
 
 ## Status indicators
 

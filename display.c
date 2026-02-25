@@ -224,6 +224,117 @@ void print_switch_summary(const ColWidths *w) {
     printf("\n\n");
 }
 
+/* ── Fetch summary ──────────────────────────────────────────────────────────── */
+void print_fetch_summary(const ColWidths *w) {
+    int fetched = 0, up_to_date = 0, no_remote = 0, errors = 0;
+
+    printf("%sFetch results:%s\n\n", C(COL_BOLD), C(COL_RESET));
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        const char *name = strrchr(r->path, '/');
+        name = name ? name + 1 : r->path;
+
+        printf("  %s", C(COL_CYAN));
+        write_col(name, w->name);
+        printf("%s  ", C(COL_RESET));
+
+        switch (r->fetch_result) {
+            case FR_FETCHED:
+                printf("%s✓ fetched%s\n", C(COL_GREEN), C(COL_RESET));
+                fetched++;
+                break;
+            case FR_UP_TO_DATE:
+                printf("%s· up to date%s\n", C(COL_DIM), C(COL_RESET));
+                up_to_date++;
+                break;
+            case FR_NO_REMOTE:
+                printf("%s· no remote%s\n", C(COL_DIM), C(COL_RESET));
+                no_remote++;
+                break;
+            case FR_ERROR:
+                printf("%s✗ error%s\n", C(COL_RED), C(COL_RESET));
+                errors++;
+                break;
+            default:
+                break;
+        }
+    }
+
+    printf("\n");
+    print_separator(w);
+    printf("  fetched %s%d%s · up to date %s%d%s",
+        C(COL_GREEN), fetched,     C(COL_RESET),
+        C(COL_DIM),   up_to_date,  C(COL_RESET));
+    if (no_remote)
+        printf(" · no remote %s%d%s", C(COL_DIM), no_remote, C(COL_RESET));
+    if (errors)
+        printf(" · errors %s%d%s", C(COL_RED), errors, C(COL_RESET));
+    printf("\n\n");
+}
+
+/* ── Pull summary ───────────────────────────────────────────────────────────── */
+void print_pull_summary(const ColWidths *w) {
+    int pulled = 0, up_to_date = 0, dirty = 0, not_ff = 0, no_remote = 0, errors = 0;
+
+    printf("%sPull results:%s\n\n", C(COL_BOLD), C(COL_RESET));
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        const char *name = strrchr(r->path, '/');
+        name = name ? name + 1 : r->path;
+
+        printf("  %s", C(COL_CYAN));
+        write_col(name, w->name);
+        printf("%s  ", C(COL_RESET));
+
+        switch (r->pull_result) {
+            case PR_PULLED:
+                printf("%s✓ pulled%s\n", C(COL_GREEN), C(COL_RESET));
+                pulled++;
+                break;
+            case PR_UP_TO_DATE:
+                printf("%s· up to date%s\n", C(COL_DIM), C(COL_RESET));
+                up_to_date++;
+                break;
+            case PR_DIRTY:
+                printf("%s✗ skipped%s  %s(dirty)%s\n",
+                    C(COL_RED), C(COL_RESET), C(COL_DIM), C(COL_RESET));
+                dirty++;
+                break;
+            case PR_NOT_FF:
+                printf("%s· not fast-forward%s\n", C(COL_YELLOW), C(COL_RESET));
+                not_ff++;
+                break;
+            case PR_NO_REMOTE:
+                printf("%s· no remote%s\n", C(COL_DIM), C(COL_RESET));
+                no_remote++;
+                break;
+            case PR_ERROR:
+                printf("%s✗ error%s\n", C(COL_RED), C(COL_RESET));
+                errors++;
+                break;
+            default:
+                break;
+        }
+    }
+
+    printf("\n");
+    print_separator(w);
+    printf("  pulled %s%d%s · up to date %s%d%s",
+        C(COL_GREEN), pulled,      C(COL_RESET),
+        C(COL_DIM),   up_to_date,  C(COL_RESET));
+    if (dirty)
+        printf(" · skipped %s%d dirty%s", C(COL_RED), dirty, C(COL_RESET));
+    if (not_ff)
+        printf(" · not fast-forward %s%d%s", C(COL_YELLOW), not_ff, C(COL_RESET));
+    if (no_remote)
+        printf(" · no remote %s%d%s", C(COL_DIM), no_remote, C(COL_RESET));
+    if (errors)
+        printf(" · errors %s%d%s", C(COL_RED), errors, C(COL_RESET));
+    printf("\n\n");
+}
+
 /* ── Spinner ────────────────────────────────────────────────────────────────── */
 static const char   *SPINNER_FRAMES[] = {
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
