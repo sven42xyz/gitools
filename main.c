@@ -77,26 +77,51 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    git_libgit2_init();
+    if (git_libgit2_init() < 0) {
+        const git_error *e = git_error_last();
+        fprintf(stderr, "Error: failed to initialize libgit2: %s\n",
+                e ? e->message : "(unknown)");
+        free(g_repos);
+        return 1;
+    }
+
+    int maj, min, rev;
+    git_libgit2_version(&maj, &min, &rev);
+    if (maj < 1) {
+        fprintf(stderr, "Error: libgit2 >= 1.0 required, found %d.%d.%d\n",
+                maj, min, rev);
+        git_libgit2_shutdown();
+        free(g_repos);
+        return 1;
+    }
+
+    char spin_label[PATH_MAX + 16];
+    snprintf(spin_label, sizeof(spin_label), "%s%s%s %s",
+             C(COL_BOLD), opt_switch ? "Switching:" : "Scanning:",
+             C(COL_RESET), abs_dir);
+    spinner_start(spin_label);
     find_repos(abs_dir, 0);
+    spinner_stop();
+
+    ColWidths w = compute_col_widths();
 
     /* ── status table header (always shown first) ── */
-    printf("%sScanning:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
+    printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
 
-    if (opt_switch) print_switch_summary();
+    if (opt_switch) print_switch_summary(&w);
 
-    print_header();
+    print_header(&w);
 
     int total = 0, clean = 0, dirty = 0, behind = 0;
     for (size_t i = 0; i < g_repo_count; i++) {
         const Repo *r = &g_repos[i];
-        print_repo(r);
+        print_repo(r, &w);
         total++;
         if (r->staged || r->modified || r->untracked) dirty++; else clean++;
         if (r->behind > 0) behind++;
     }
 
-    printf("  %s%s%s\n", C(COL_DIM), SEP_LINE, C(COL_RESET));
+    print_separator(&w);
     if (total == 0) {
         printf("  No git repositories found.\n");
     } else {

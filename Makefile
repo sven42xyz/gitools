@@ -25,7 +25,8 @@ else
 endif
 
 CFLAGS  = -std=c11 -Wall -Wextra -O2 -D_POSIX_C_SOURCE=200809L $(LIBGIT2_CFLAGS) -DVERSION_STRING=\"$(VERSION)\"
-LDFLAGS = $(LIBGIT2_LIBS)
+PTHREAD := $(if $(filter Linux,$(UNAME)),-lpthread,)
+LDFLAGS = $(LIBGIT2_LIBS) $(PTHREAD)
 
 all: $(TARGET)
 

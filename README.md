@@ -5,7 +5,7 @@
 A fast, minimal tool to inspect and act on multiple git repositories.
 
 ```
-Scanning: /Users/sven/projects
+Scanned: /Users/sven/projects
 
   NAME                          BRANCH                          SYNC     WHEN            STATUS
   ────────────────────────────────────────────────────────────────────────────────────────────

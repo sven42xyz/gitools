@@ -18,13 +18,18 @@
 #define COL_BOLD    "\033[1m"
 #define COL_DIM     "\033[2m"
 
-/* ── Column widths (display chars) ────────────────────────────────────────── */
-#define COL_NAME   28
-#define COL_BRANCH 30
-#define COL_SYNC    7
-#define COL_TIME   14
-#define SEP_LINE \
-    "────────────────────────────────────────────────────────────────────────────────────"
+/* ── Utilities ─────────────────────────────────────────────────────────────── */
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+/* ── Dynamic column widths ─────────────────────────────────────────────────── */
+typedef struct {
+    int name;
+    int branch;
+    int sync;
+    int time;
+} ColWidths;
 
 /* ── Switch result ─────────────────────────────────────────────────────────── */
 typedef enum {
@@ -72,9 +77,13 @@ const char *C(const char *color);
 int         utf8_width(const char *s);
 const char *relative_time(git_time_t t);
 void        write_col(const char *s, int width);
-void        print_header(void);
-void        print_repo(const Repo *r);
-void        print_switch_summary(void);
+ColWidths   compute_col_widths(void);
+void        print_separator(const ColWidths *w);
+void        print_header(const ColWidths *w);
+void        print_repo(const Repo *r, const ColWidths *w);
+void        print_switch_summary(const ColWidths *w);
+void        spinner_start(const char *msg);
+void        spinner_stop(void);
 
 /* scan.c */
 void find_repos(const char *path, int depth);
