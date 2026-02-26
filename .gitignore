@@ -2,3 +2,4 @@ gitls
 *.o
 tests/unit
 .vscode/
+ideas.md
