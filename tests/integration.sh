@@ -310,6 +310,64 @@ else
     failed=$((failed + 1))
 fi
 
+# ── pull -s: rejected ─────────────────────────────────────────────────────────
+printf "\npull -s: rejected\n"
+D="$WORK/pull-s-reject"; mkgit "$D"
+check "pull -s error" "cannot be combined" "$GITLS" --no-color pull -s main "$D"
+
+# ── detached HEAD ─────────────────────────────────────────────────────────────
+printf "\ndetached HEAD\n"
+D="$WORK/detached"; mkgit "$D"
+SHA=$(git -C "$D" rev-parse HEAD)
+git -C "$D" checkout -q "$SHA"
+check "detached HEAD shown" "(" "$GITLS" --no-color "$D"
+
+# ── fetch -v: shows per-repo no-remote line (hidden without -v) ───────────────
+printf "\nfetch -v: shows no-remote\n"
+D="$WORK/fetch-v-noremote"; mkgit "$D"
+DNAME=$(basename "$D")
+# without -v the per-repo line is omitted; only the summary count "no remote 1" appears
+# with -v the per-repo line "  name  · no remote" is printed too
+out_quiet=$("$GITLS" --no-color fetch "$D" 2>&1)
+out_verbose=$("$GITLS" --no-color fetch -v "$D" 2>&1)
+# check for the per-repo result line which includes the repo name followed by · no remote
+if ! printf '%s' "$out_quiet" | grep -qF "$DNAME  · no remote" && \
+     printf '%s' "$out_verbose" | grep -qF "$DNAME  · no remote"; then
+    printf "  ok  fetch -v shows per-repo no-remote line\n"; passed=$((passed + 1))
+else
+    printf "FAIL  fetch -v shows per-repo no-remote line\n     quiet: %s\n     verbose: %s\n" \
+           "$out_quiet" "$out_verbose"
+    failed=$((failed + 1))
+fi
+
+# ── pull -v: shows up-to-date ─────────────────────────────────────────────────
+printf "\npull -v: shows up-to-date\n"
+BARE_VP="$WORK/pull-v-origin.git"
+git init --bare -q "$BARE_VP"
+VP_REPO="$WORK/pull-v-repo"
+git clone -q "$BARE_VP" "$VP_REPO"
+git -C "$VP_REPO" config user.email "test@gitls.test"
+git -C "$VP_REPO" config user.name "Test"
+printf 'init\n' > "$VP_REPO/README"
+git -C "$VP_REPO" add README
+git -C "$VP_REPO" commit -q -m "init"
+git -C "$VP_REPO" push -q origin HEAD
+check "pull -v shows up to date" "up to date" "$GITLS" --no-color pull -v "$VP_REPO"
+
+# ── config: skip_dirs ─────────────────────────────────────────────────────────
+printf "\nconfig: skip_dirs\n"
+SKIP_DIR="$WORK/skiptest"
+mkgit "$SKIP_DIR/keep"
+mkgit "$SKIP_DIR/ignore"
+printf 'skip_dirs=ignore\n' > "$CFG"
+out=$(GITLS_CONFIG="$CFG" "$GITLS" --no-color "$SKIP_DIR" 2>&1)
+if printf '%s' "$out" | grep -qF "keep" && ! printf '%s' "$out" | grep -qF "ignore"; then
+    printf "  ok  skip_dirs omits matched dir\n"; passed=$((passed + 1))
+else
+    printf "FAIL  skip_dirs omits matched dir\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
 # ── cleanup ───────────────────────────────────────────────────────────────────
 rm -rf "$WORK"
 printf "\n%d passed, %d failed\n" "$passed" "$failed"

@@ -37,14 +37,40 @@ const char *relative_time(git_time_t t) {
 /* ── UTF-8 display width ───────────────────────────────────────────────────── */
 int utf8_width(const char *s) {
     int w = 0;
-    for (const unsigned char *p = (const unsigned char *)s; *p; ) {
-        if      (*p < 0x80) { p += 1; }
-        else if (*p < 0xE0) { p += 2; }
-        else if (*p < 0xF0) { p += 3; }
-        else                { p += 4; }
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        int seqlen;
+        if      (*p < 0x80) seqlen = 1;
+        else if (*p < 0xE0) seqlen = 2;
+        else if (*p < 0xF0) seqlen = 3;
+        else                seqlen = 4;
+        /* guard against truncated sequences at end of string */
+        for (int j = 1; j < seqlen; j++)
+            if (p[j] == '\0') goto done;
+        p += seqlen;
         w++;
     }
+done:
     return w;
+}
+
+/* Returns the byte length of the longest prefix of s with display width <= max_w. */
+static size_t utf8_byte_len_for_width(const char *s, int max_w) {
+    const unsigned char *p = (const unsigned char *)s;
+    int w = 0;
+    while (*p && w < max_w) {
+        int seqlen;
+        if      (*p < 0x80) seqlen = 1;
+        else if (*p < 0xE0) seqlen = 2;
+        else if (*p < 0xF0) seqlen = 3;
+        else                seqlen = 4;
+        for (int j = 1; j < seqlen; j++)
+            if (p[j] == '\0') goto done;
+        p += seqlen;
+        w++;
+    }
+done:
+    return (size_t)(p - (const unsigned char *)s);
 }
 
 /* ── Column printer ────────────────────────────────────────────────────────── */
@@ -54,7 +80,9 @@ void write_col(const char *s, int width) {
         printf("%s", s);
         printf("%-*s", width - dw, "");
     } else {
-        printf("%.*s~", width - 1, s);
+        /* truncate at a character boundary, not a byte boundary */
+        size_t bytes = utf8_byte_len_for_width(s, width - 1);
+        printf("%.*s~", (int)bytes, s);
     }
 }
 
@@ -386,13 +414,12 @@ static const char   *SPINNER_FRAMES[] = {
 static const int     SPINNER_N = 10;
 static _Atomic int   spinner_active = 0;
 static pthread_t     spinner_tid;
-static const char   *spinner_msg;
 
 static void *spinner_run(void *arg) {
-    (void)arg;
+    const char *msg = (const char *)arg;
     int i = 0;
     while (atomic_load(&spinner_active)) {
-        printf("\r  %s %s", SPINNER_FRAMES[i % SPINNER_N], spinner_msg);
+        printf("\r  %s %s", SPINNER_FRAMES[i % SPINNER_N], msg);
         fflush(stdout);
         i++;
         usleep(80000);
@@ -404,9 +431,8 @@ static void *spinner_run(void *arg) {
 
 void spinner_start(const char *msg) {
     if (!isatty(STDOUT_FILENO) || opt_no_color) return;
-    spinner_msg = msg;
     atomic_store(&spinner_active, 1);
-    pthread_create(&spinner_tid, NULL, spinner_run, NULL);
+    pthread_create(&spinner_tid, NULL, spinner_run, (void *)msg);
 }
 
 void spinner_stop(void) {

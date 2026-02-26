@@ -47,6 +47,10 @@ static void test_utf8_width(void) {
     CHECK("↑3↓2 (diverged)",         utf8_width("\xe2\x86\x91" "3" "\xe2\x86\x93" "2") == 4);
     CHECK("4-byte char",             utf8_width("\xf0\x9f\x98\x80") == 1);
     CHECK("mixed ascii+utf8",        utf8_width("ok\xe2\x86\x91") == 3);
+    /* truncated / incomplete sequences must not read past the null terminator */
+    CHECK("truncated 3-byte seq",    utf8_width("\xe2\x86") == 0);
+    CHECK("truncated 4-byte seq",    utf8_width("\xf0\x9f\x98") == 0);
+    CHECK("ascii before truncated",  utf8_width("ab\xe2\x86") == 2);
 }
 
 /* ── relative_time ──────────────────────────────────────────────────────────── */

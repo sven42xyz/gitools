@@ -69,13 +69,15 @@ void load_config(void) {
             if (*end == '\0' && d >= 0) opt_max_depth = d;
 
         } else if (strcmp(key, "skip_dirs") == 0) {
-            /* split comma-separated list */
+#define MAX_SKIP_DIRS 64
+            /* split comma-separated list (capped to avoid memory exhaustion) */
             char *copy = strdup(val);
             if (!copy) continue;
 
             size_t count = 1;
             for (const char *p = copy; *p; p++)
                 if (*p == ',') count++;
+            if (count > MAX_SKIP_DIRS) count = MAX_SKIP_DIRS;
 
             char **arr = malloc(count * sizeof(char *));
             if (!arr) { free(copy); continue; }

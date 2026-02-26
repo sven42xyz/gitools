@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <errno.h>
 #include <stdbool.h>
 
 #include <git2.h>
@@ -95,9 +96,13 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "-d") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -d requires a number\n"); return 1; }
             char *end;
-            opt_max_depth = (int)strtol(argv[++i], &end, 10);
-            if (*end != '\0') { fprintf(stderr, "Error: -d requires a valid number\n"); return 1; }
-            if (opt_max_depth < 0) opt_max_depth = 0;
+            errno = 0;
+            long depth = strtol(argv[++i], &end, 10);
+            if (*end != '\0' || errno == ERANGE || depth < 0 || depth > INT_MAX) {
+                fprintf(stderr, "Error: -d requires a valid non-negative number\n");
+                return 1;
+            }
+            opt_max_depth = (int)depth;
         } else if (strcmp(argv[i], "-s") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -s requires a branch name\n"); return 1; }
             opt_switch = true;
@@ -111,7 +116,13 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* 4. apply config default_dir only when the user gave no directory */
+    /* 4. validate subcommand/flag combinations */
+    if (opt_pull && opt_switch) {
+        fprintf(stderr, "Error: 'pull' and '-s' cannot be combined\n");
+        return 1;
+    }
+
+    /* 5. apply config default_dir only when the user gave no directory */
     if (opt_default_dir[0] != '\0' && strcmp(scan_dir, ".") == 0)
         scan_dir = opt_default_dir;
 
@@ -137,14 +148,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* 5. require git binary for fetch/pull subcommands */
+    /* 6. require git binary for fetch/pull subcommands */
     if ((opt_fetch || opt_pull) && !git_installed()) {
         fprintf(stderr, "Error: 'git' is not installed or not in PATH\n");
         git_libgit2_shutdown();
         return 1;
     }
 
-    /* 6. spinner */
+    /* 7. spinner */
     const char *verb = opt_fetch    ? "Fetching:"
                      : opt_pull     ? "Pulling:"
                      : opt_switch   ? "Switching:"

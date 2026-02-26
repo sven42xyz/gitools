@@ -326,31 +326,67 @@ static PullResult do_pull(git_repository *repo, Repo *r) {
     return PR_ERROR;
 }
 
-/* ── Process a single repo into a pre-allocated slot ──────────────────────── */
-static void process_repo(const char *path, Repo *r) {
+/* ── Phase 1: local libgit2 queries (no subprocess) ────────────────────────── */
+/*
+ * Called from worker threads — must NOT call fork/exec.
+ * Handles all local queries and, when not fetching first, branch switching.
+ * Ahead/behind is filled here only when no network op will refresh it.
+ */
+static void process_repo_local(const char *path, Repo *r) {
     git_repository *repo = NULL;
     if (git_repository_open(&repo, path) != 0) {
         fprintf(stderr, "Warning: could not open repository at '%s'\n", path);
-        /* leave r zeroed; path is set so it still appears in output */
+        memset(r, 0, sizeof(*r));
         strncpy(r->path, path, sizeof(r->path) - 1);
+        r->path[sizeof(r->path) - 1] = '\0';
         return;
     }
 
     memset(r, 0, sizeof(*r));
     strncpy(r->path, path, sizeof(r->path) - 1);
+    r->path[sizeof(r->path) - 1] = '\0';
 
     fill_branch(r, repo);
     fill_status(r, repo);
+    fill_last_commit(r, repo);
 
-    /* fetch runs before switch so freshly fetched remote refs are available */
-    if (opt_fetch)
-        r->fetch_result = do_fetch(repo, r);
-
-    if (opt_switch) {
+    /* switch without a preceding fetch: do it here in the thread */
+    if (opt_switch && !opt_fetch) {
         r->switch_result = do_switch(repo, r, opt_switch_branch);
         if (r->switch_result == SR_SWITCHED || r->switch_result == SR_CREATED) {
             fill_branch(r, repo);
             fill_status(r, repo);
+        }
+    }
+
+    /* ahead/behind uses local remote-tracking refs; skip when a fetch will
+     * refresh them in phase 2 (stale data would just be overwritten anyway) */
+    if (!opt_fetch && !opt_pull)
+        fill_ahead_behind(r, repo);
+
+    git_repository_free(repo);
+}
+
+/* ── Phase 2: subprocess fetch/pull (sequential, main thread only) ──────────── */
+/*
+ * Called after all worker threads have joined — no other threads are running.
+ * fork/exec is safe here: no concurrent threads, no locked mutexes to inherit.
+ */
+static void process_repo_network(Repo *r) {
+    if (r->path[0] == '\0') return;   /* slot that failed to open in phase 1 */
+
+    git_repository *repo = NULL;
+    if (git_repository_open(&repo, r->path) != 0) return;
+
+    if (opt_fetch) {
+        r->fetch_result = do_fetch(repo, r);
+        /* after fetch the remote-tracking refs are fresh; now switch if requested */
+        if (opt_switch) {
+            r->switch_result = do_switch(repo, r, opt_switch_branch);
+            if (r->switch_result == SR_SWITCHED || r->switch_result == SR_CREATED) {
+                fill_branch(r, repo);
+                fill_status(r, repo);
+            }
         }
     }
 
@@ -362,8 +398,7 @@ static void process_repo(const char *path, Repo *r) {
         }
     }
 
-    fill_ahead_behind(r, repo);
-    fill_last_commit(r, repo);
+    fill_ahead_behind(r, repo);   /* refreshed after any network op */
     git_repository_free(repo);
 }
 
@@ -374,7 +409,7 @@ static void *worker_thread(void *arg) {
     (void)arg;
     size_t i;
     while ((i = atomic_fetch_add(&work_idx, 1)) < g_path_count) {
-        process_repo(g_paths[i], &g_repos[i]);
+        process_repo_local(g_paths[i], &g_repos[i]);
     }
     return NULL;
 }
@@ -400,19 +435,27 @@ void process_all_repos(void) {
 
     atomic_store(&work_idx, 0);
 
+    /* ── Phase 1: parallel local libgit2 queries ── */
     if (nthreads == 1) {
-        /* avoid thread overhead for small sets */
         worker_thread(NULL);
-        return;
+    } else {
+        pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
+        if (!threads) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+
+        for (int i = 0; i < nthreads; i++)
+            pthread_create(&threads[i], NULL, worker_thread, NULL);
+        for (int i = 0; i < nthreads; i++)
+            pthread_join(threads[i], NULL);
+
+        free(threads);
     }
 
-    pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
-    if (!threads) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
-
-    for (int i = 0; i < nthreads; i++)
-        pthread_create(&threads[i], NULL, worker_thread, NULL);
-    for (int i = 0; i < nthreads; i++)
-        pthread_join(threads[i], NULL);
-
-    free(threads);
+    /* ── Phase 2: sequential subprocess fetch/pull (no concurrent threads) ──
+     * All worker threads have joined. Stop the spinner before fork so no
+     * other thread is running while the child process is created. */
+    if (opt_fetch || opt_pull) {
+        spinner_stop();   /* idempotent; main.c will call it again harmlessly */
+        for (size_t i = 0; i < g_repo_count; i++)
+            process_repo_network(&g_repos[i]);
+    }
 }
