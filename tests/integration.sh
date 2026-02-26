@@ -47,7 +47,7 @@ mkgit() {
 # ── version ───────────────────────────────────────────────────────────────────
 printf "version\n"
 check_exit "exit 0"   0 "$GITLS" --version
-check      "output"   "gitls 0.1.0" "$GITLS" --version
+check      "output"   "gitls 0.2.0" "$GITLS" --version
 
 # ── no repos ──────────────────────────────────────────────────────────────────
 printf "\nno repos\n"

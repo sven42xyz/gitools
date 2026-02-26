@@ -1,5 +1,5 @@
 Name:           gitls
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        A fast, minimal tool to inspect and act on multiple git repositories
 
@@ -33,5 +33,5 @@ It also supports bulk branch switching with the -s flag.
 %{_bindir}/gitls
 
 %changelog
-* Mon Feb 24 2025 Sven Siepermann <sven@siepermann.dev> - 0.1.0-1
+* Mon Feb 24 2025 Sven Siepermann <sven@siepermann.dev> - 0.2.0-1
 - Initial package
