@@ -121,6 +121,7 @@ static void fill_ahead_behind(Repo *r, git_repository *repo) {
 
     git_buf upstream_name = GIT_BUF_INIT;
     if (git_branch_upstream_name(&upstream_name, repo, git_reference_name(head)) != 0) {
+        git_buf_dispose(&upstream_name);
         git_object_free(local_obj);
         git_reference_free(head);
         return;
@@ -245,6 +246,8 @@ static int run_git_capture(const char **argv, char *buf, size_t n) {
         dup2(pfd[1], STDOUT_FILENO);
         dup2(pfd[1], STDERR_FILENO);
         close(pfd[1]);
+        /* Force English output so string matching in do_pull() is locale-safe */
+        setenv("LC_ALL", "C", 1);
         execvp("git", (char *const *)argv);
         _exit(127);   /* exec failed: git not in PATH */
     }
@@ -342,7 +345,6 @@ static void process_repo_local(const char *path, Repo *r) {
         return;
     }
 
-    memset(r, 0, sizeof(*r));
     strncpy(r->path, path, sizeof(r->path) - 1);
     r->path[sizeof(r->path) - 1] = '\0';
 
@@ -442,9 +444,15 @@ void process_all_repos(void) {
         pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
         if (!threads) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
 
-        for (int i = 0; i < nthreads; i++)
-            pthread_create(&threads[i], NULL, worker_thread, NULL);
-        for (int i = 0; i < nthreads; i++)
+        int created = 0;
+        for (int i = 0; i < nthreads; i++) {
+            if (pthread_create(&threads[i], NULL, worker_thread, NULL) != 0) {
+                fprintf(stderr, "Warning: could not create worker thread %d\n", i);
+                break;
+            }
+            created++;
+        }
+        for (int i = 0; i < created; i++)
             pthread_join(threads[i], NULL);
 
         free(threads);

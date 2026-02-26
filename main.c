@@ -107,6 +107,7 @@ int main(int argc, char **argv) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -s requires a branch name\n"); return 1; }
             opt_switch = true;
             strncpy(opt_switch_branch, argv[++i], sizeof(opt_switch_branch) - 1);
+            opt_switch_branch[sizeof(opt_switch_branch) - 1] = '\0';
         } else if (argv[i][0] != '-') {
             scan_dir = argv[i];
         } else {
@@ -141,8 +142,8 @@ int main(int argc, char **argv) {
 
     int maj, min, rev;
     git_libgit2_version(&maj, &min, &rev);
-    if (maj < 1) {
-        fprintf(stderr, "Error: libgit2 >= 1.0 required, found %d.%d.%d\n",
+    if (maj < 1 || (maj == 1 && min < 9)) {
+        fprintf(stderr, "Error: libgit2 >= 1.9 required, found %d.%d.%d\n",
                 maj, min, rev);
         git_libgit2_shutdown();
         return 1;

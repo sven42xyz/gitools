@@ -85,7 +85,14 @@ void load_config(void) {
             size_t idx = 0;
             char *tok = strtok(copy, ",");
             while (tok && idx < count) {
-                arr[idx++] = strdup(tok);
+                char *dup = strdup(tok);
+                if (!dup) {
+                    for (size_t i = 0; i < idx; i++) free(arr[i]);
+                    free(arr);
+                    free(copy);
+                    goto next_line;
+                }
+                arr[idx++] = dup;
                 tok = strtok(NULL, ",");
             }
 
@@ -103,6 +110,7 @@ void load_config(void) {
             if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
                 opt_no_color = true;
         }
+        next_line: ;   /* jump target for strdup failure in skip_dirs */
     }
 
     fclose(f);

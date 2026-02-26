@@ -3,6 +3,7 @@
 
 GITLS="$(cd "$(dirname "$0")/.." && pwd)/gitls"
 WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
 passed=0
 failed=0
 
@@ -10,6 +11,11 @@ failed=0
 
 check() {
     desc="$1"; expected="$2"; shift 2
+    if [ -z "$expected" ]; then
+        printf "FAIL  %s: empty expected string\n" "$desc"
+        failed=$((failed + 1))
+        return
+    fi
     out=$("$@" 2>&1)
     if printf '%s' "$out" | grep -qF "$expected"; then
         printf "  ok  %s\n" "$desc"
@@ -35,13 +41,16 @@ check_exit() {
 
 mkgit() {
     dir="$1"
-    mkdir -p "$dir"
-    git -C "$dir" init -q
-    git -C "$dir" config user.email "test@gitls.test"
-    git -C "$dir" config user.name "Test"
-    printf 'init\n' > "$dir/README"
-    git -C "$dir" add README
-    git -C "$dir" commit -q -m "init"
+    mkdir -p "$dir" &&
+    git -C "$dir" init -q &&
+    git -C "$dir" config user.email "test@gitls.test" &&
+    git -C "$dir" config user.name "Test" &&
+    printf 'init\n' > "$dir/README" &&
+    git -C "$dir" add README &&
+    git -C "$dir" commit -q -m "init" || {
+        printf "mkgit: setup failed for %s\n" "$dir" >&2
+        exit 1
+    }
 }
 
 # ── version ───────────────────────────────────────────────────────────────────
