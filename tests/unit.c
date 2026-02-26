@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "../gitools.h"
 
@@ -13,6 +14,7 @@
 int    opt_max_depth             = 5;
 bool   opt_all                   = false;
 bool   opt_no_color              = true;   /* no colour in tests */
+bool   opt_verbose               = false;
 bool   opt_switch                = false;
 char   opt_switch_branch[256]    = "";
 bool   opt_fetch                 = false;
@@ -50,7 +52,17 @@ static void test_utf8_width(void) {
 /* ── relative_time ──────────────────────────────────────────────────────────── */
 static void test_relative_time(void) {
     printf("\nrelative_time\n");
-    CHECK("zero = no commits",    strcmp(relative_time(0), "no commits") == 0);
+    time_t now = time(NULL);
+    CHECK("zero = no commits",  strcmp(relative_time(0),              "no commits") == 0);
+    CHECK("30s = just now",     strcmp(relative_time(now - 30),       "just now")   == 0);
+    CHECK("5 min ago",          strcmp(relative_time(now - 300),      "5 min ago")  == 0);
+    CHECK("1 hour ago",         strcmp(relative_time(now - 3600),     "1 hour ago") == 0);
+    CHECK("3 hours ago",        strcmp(relative_time(now - 10800),    "3 hours ago") == 0);
+    CHECK("1 day ago",          strcmp(relative_time(now - 86400),    "1 day ago")  == 0);
+    CHECK("3 days ago",         strcmp(relative_time(now - 259200),   "3 days ago") == 0);
+    CHECK("1 month ago",        strcmp(relative_time(now - 2592000),  "1 mo ago")   == 0);
+    CHECK("2 months ago",       strcmp(relative_time(now - 5184000),  "2 mos ago")  == 0);
+    CHECK("1 year ago",         strcmp(relative_time(now - 31536000), "1 yr ago")   == 0);
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────── */

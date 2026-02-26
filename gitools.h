@@ -35,9 +35,10 @@ typedef struct {
 typedef enum {
     SR_NA = 0,
     SR_SWITCHED,
+    SR_CREATED,     /* created local tracking branch from origin/<branch> */
     SR_ALREADY,
     SR_DIRTY,       /* skipped: staged or modified changes */
-    SR_NOT_FOUND,   /* branch doesn't exist in this repo */
+    SR_NOT_FOUND,   /* branch doesn't exist locally or on origin */
     SR_ERROR,       /* checkout or ref operation failed */
 } SwitchResult;
 
@@ -75,12 +76,14 @@ typedef struct {
     SwitchResult switch_result;
     FetchResult  fetch_result;
     PullResult   pull_result;
+    char         net_error[256];   /* libgit2 error message on fetch/pull failure */
 } Repo;
 
 /* ── Global options (defined in main.c) ───────────────────────────────────── */
 extern int    opt_max_depth;
 extern bool   opt_all;
 extern bool   opt_no_color;
+extern bool   opt_verbose;
 extern bool   opt_switch;
 extern char   opt_switch_branch[256];
 extern bool   opt_fetch;

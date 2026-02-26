@@ -51,8 +51,10 @@ tests/unit: tests/unit.c $(TEST_OBJS)
 clean:
 	rm -f $(TARGET) $(OBJS) tests/unit
 
+INSTALL_NAME ?= $(TARGET)
+
 install: $(TARGET)
 	install -d $(PREFIX)/bin
-	install -m 755 $(TARGET) $(PREFIX)/bin/$(TARGET)
+	install -m 755 $(TARGET) $(PREFIX)/bin/$(INSTALL_NAME)
 
 .PHONY: all clean install test

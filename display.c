@@ -170,7 +170,7 @@ void print_repo(const Repo *r, const ColWidths *w) {
 
 /* ── Switch summary ────────────────────────────────────────────────────────── */
 void print_switch_summary(const ColWidths *w) {
-    int switched = 0, already = 0, skipped = 0;
+    int switched = 0, created = 0, already = 0, not_found = 0, skipped = 0;
 
     printf("%sSwitched to branch:%s %s%s%s\n\n",
         C(COL_BOLD), C(COL_RESET),
@@ -181,6 +181,22 @@ void print_switch_summary(const ColWidths *w) {
         const char *name = strrchr(r->path, '/');
         name = name ? name + 1 : r->path;
 
+        /* accumulate counts regardless of verbosity */
+        switch (r->switch_result) {
+            case SR_SWITCHED:   switched++;   break;
+            case SR_CREATED:    created++;    break;
+            case SR_ALREADY:    already++;    break;
+            case SR_NOT_FOUND:  not_found++;  break;
+            case SR_DIRTY:
+            case SR_ERROR:      skipped++;    break;
+            default: break;
+        }
+
+        /* skip uninteresting rows unless -v */
+        if (!opt_verbose &&
+            (r->switch_result == SR_ALREADY || r->switch_result == SR_NOT_FOUND))
+            continue;
+
         printf("  %s", C(COL_CYAN));
         write_col(name, w->name);
         printf("%s  ", C(COL_RESET));
@@ -188,11 +204,12 @@ void print_switch_summary(const ColWidths *w) {
         switch (r->switch_result) {
             case SR_SWITCHED:
                 printf("%s✓ switched%s\n", C(COL_GREEN), C(COL_RESET));
-                switched++;
+                break;
+            case SR_CREATED:
+                printf("%s✓ created & switched%s\n", C(COL_GREEN), C(COL_RESET));
                 break;
             case SR_ALREADY:
                 printf("%s· already on branch%s\n", C(COL_DIM), C(COL_RESET));
-                already++;
                 break;
             case SR_DIRTY:
                 printf("%s✗ skipped%s  %s", C(COL_RED), C(COL_RESET), C(COL_DIM));
@@ -200,14 +217,12 @@ void print_switch_summary(const ColWidths *w) {
                 if (r->staged && r->modified) printf(", ");
                 if (r->modified) printf("%d modified", r->modified);
                 printf("%s\n", C(COL_RESET));
-                skipped++;
                 break;
             case SR_NOT_FOUND:
                 printf("%s· branch not found%s\n", C(COL_DIM), C(COL_RESET));
                 break;
             case SR_ERROR:
                 printf("%s✗ error (checkout failed)%s\n", C(COL_RED), C(COL_RESET));
-                skipped++;
                 break;
             default:
                 break;
@@ -217,8 +232,12 @@ void print_switch_summary(const ColWidths *w) {
     printf("\n");
     print_separator(w);
     printf("  switched %s%d%s · already %s%d%s",
-        C(COL_GREEN), switched, C(COL_RESET),
-        C(COL_DIM),   already,  C(COL_RESET));
+        C(COL_GREEN), switched,  C(COL_RESET),
+        C(COL_DIM),   already,   C(COL_RESET));
+    if (created)
+        printf(" · created %s%d%s", C(COL_CYAN), created, C(COL_RESET));
+    if (not_found)
+        printf(" · not found %s%d%s", C(COL_DIM), not_found, C(COL_RESET));
     if (skipped)
         printf(" · skipped %s%d dirty%s", C(COL_RED), skipped, C(COL_RESET));
     printf("\n\n");
@@ -235,6 +254,20 @@ void print_fetch_summary(const ColWidths *w) {
         const char *name = strrchr(r->path, '/');
         name = name ? name + 1 : r->path;
 
+        /* accumulate counts regardless of verbosity */
+        switch (r->fetch_result) {
+            case FR_FETCHED:      fetched++;    break;
+            case FR_UP_TO_DATE:   up_to_date++; break;
+            case FR_NO_REMOTE:    no_remote++;  break;
+            case FR_ERROR:        errors++;     break;
+            default: break;
+        }
+
+        /* skip uninteresting rows unless -v */
+        if (!opt_verbose &&
+            (r->fetch_result == FR_UP_TO_DATE || r->fetch_result == FR_NO_REMOTE))
+            continue;
+
         printf("  %s", C(COL_CYAN));
         write_col(name, w->name);
         printf("%s  ", C(COL_RESET));
@@ -242,19 +275,18 @@ void print_fetch_summary(const ColWidths *w) {
         switch (r->fetch_result) {
             case FR_FETCHED:
                 printf("%s✓ fetched%s\n", C(COL_GREEN), C(COL_RESET));
-                fetched++;
                 break;
             case FR_UP_TO_DATE:
                 printf("%s· up to date%s\n", C(COL_DIM), C(COL_RESET));
-                up_to_date++;
                 break;
             case FR_NO_REMOTE:
                 printf("%s· no remote%s\n", C(COL_DIM), C(COL_RESET));
-                no_remote++;
                 break;
             case FR_ERROR:
-                printf("%s✗ error%s\n", C(COL_RED), C(COL_RESET));
-                errors++;
+                printf("%s✗ error%s", C(COL_RED), C(COL_RESET));
+                if (r->net_error[0])
+                    printf("  %s%s%s", C(COL_DIM), r->net_error, C(COL_RESET));
+                printf("\n");
                 break;
             default:
                 break;
@@ -263,9 +295,10 @@ void print_fetch_summary(const ColWidths *w) {
 
     printf("\n");
     print_separator(w);
-    printf("  fetched %s%d%s · up to date %s%d%s",
-        C(COL_GREEN), fetched,     C(COL_RESET),
-        C(COL_DIM),   up_to_date,  C(COL_RESET));
+    printf("  fetched %s%d%s",
+        C(COL_GREEN), fetched, C(COL_RESET));
+    if (up_to_date)
+        printf(" · up to date %s%d%s", C(COL_DIM), up_to_date, C(COL_RESET));
     if (no_remote)
         printf(" · no remote %s%d%s", C(COL_DIM), no_remote, C(COL_RESET));
     if (errors)
@@ -284,6 +317,22 @@ void print_pull_summary(const ColWidths *w) {
         const char *name = strrchr(r->path, '/');
         name = name ? name + 1 : r->path;
 
+        /* accumulate counts regardless of verbosity */
+        switch (r->pull_result) {
+            case PR_PULLED:      pulled++;     break;
+            case PR_UP_TO_DATE:  up_to_date++; break;
+            case PR_DIRTY:       dirty++;      break;
+            case PR_NOT_FF:      not_ff++;     break;
+            case PR_NO_REMOTE:   no_remote++;  break;
+            case PR_ERROR:       errors++;     break;
+            default: break;
+        }
+
+        /* skip uninteresting rows unless -v */
+        if (!opt_verbose &&
+            (r->pull_result == PR_UP_TO_DATE || r->pull_result == PR_NO_REMOTE))
+            continue;
+
         printf("  %s", C(COL_CYAN));
         write_col(name, w->name);
         printf("%s  ", C(COL_RESET));
@@ -291,28 +340,22 @@ void print_pull_summary(const ColWidths *w) {
         switch (r->pull_result) {
             case PR_PULLED:
                 printf("%s✓ pulled%s\n", C(COL_GREEN), C(COL_RESET));
-                pulled++;
                 break;
             case PR_UP_TO_DATE:
                 printf("%s· up to date%s\n", C(COL_DIM), C(COL_RESET));
-                up_to_date++;
                 break;
             case PR_DIRTY:
                 printf("%s✗ skipped%s  %s(dirty)%s\n",
                     C(COL_RED), C(COL_RESET), C(COL_DIM), C(COL_RESET));
-                dirty++;
                 break;
             case PR_NOT_FF:
                 printf("%s· not fast-forward%s\n", C(COL_YELLOW), C(COL_RESET));
-                not_ff++;
                 break;
             case PR_NO_REMOTE:
                 printf("%s· no remote%s\n", C(COL_DIM), C(COL_RESET));
-                no_remote++;
                 break;
             case PR_ERROR:
                 printf("%s✗ error%s\n", C(COL_RED), C(COL_RESET));
-                errors++;
                 break;
             default:
                 break;
@@ -321,9 +364,10 @@ void print_pull_summary(const ColWidths *w) {
 
     printf("\n");
     print_separator(w);
-    printf("  pulled %s%d%s · up to date %s%d%s",
-        C(COL_GREEN), pulled,      C(COL_RESET),
-        C(COL_DIM),   up_to_date,  C(COL_RESET));
+    printf("  pulled %s%d%s",
+        C(COL_GREEN), pulled, C(COL_RESET));
+    if (up_to_date)
+        printf(" · up to date %s%d%s", C(COL_DIM), up_to_date, C(COL_RESET));
     if (dirty)
         printf(" · skipped %s%d dirty%s", C(COL_RED), dirty, C(COL_RESET));
     if (not_ff)

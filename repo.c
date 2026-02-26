@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include "gitools.h"
 
 /* Suppress noisy -Wmissing-field-initializers triggered by libgit2 macros */
@@ -170,9 +171,16 @@ static SwitchResult do_switch(git_repository *repo, const Repo *r,
     if (strcmp(r->branch, target) == 0)
         return SR_ALREADY;
 
+    /* try local branch first, then remote tracking ref */
     git_reference *ref = NULL;
-    if (git_branch_lookup(&ref, repo, target, GIT_BRANCH_LOCAL) != 0)
-        return SR_NOT_FOUND;
+    int from_remote = 0;
+    if (git_branch_lookup(&ref, repo, target, GIT_BRANCH_LOCAL) != 0) {
+        char remote_ref[PATH_MAX];
+        snprintf(remote_ref, sizeof(remote_ref), "refs/remotes/origin/%s", target);
+        if (git_reference_lookup(&ref, repo, remote_ref) != 0)
+            return SR_NOT_FOUND;
+        from_remote = 1;
+    }
 
     if (r->staged || r->modified) {
         git_reference_free(ref);
@@ -185,6 +193,20 @@ static SwitchResult do_switch(git_repository *repo, const Repo *r,
         return SR_ERROR;
     }
     git_reference_free(ref);
+
+    /* create local tracking branch when switching from a remote ref */
+    if (from_remote) {
+        git_reference *new_branch = NULL;
+        if (git_branch_create(&new_branch, repo, target,
+                              (git_commit *)target_obj, 0) != 0) {
+            git_object_free(target_obj);
+            return SR_ERROR;
+        }
+        char upstream[sizeof(opt_switch_branch) + 8];
+        snprintf(upstream, sizeof(upstream), "origin/%s", target);
+        git_branch_set_upstream(new_branch, upstream);  /* tracking is best-effort */
+        git_reference_free(new_branch);
+    }
 
     git_checkout_options opts = {
         .version           = GIT_CHECKOUT_OPTIONS_VERSION,
@@ -200,71 +222,71 @@ static SwitchResult do_switch(git_repository *repo, const Repo *r,
     if (git_repository_set_head(repo, refname) != 0)
         return SR_ERROR;
 
-    return SR_SWITCHED;
+    return from_remote ? SR_CREATED : SR_SWITCHED;
 }
 
-/* ── Credential callback ────────────────────────────────────────────────────── */
+/* ── Subprocess helper ─────────────────────────────────────────────────────── */
 /*
- * Called by libgit2 when a remote requires authentication.
- * Sequence for SSH remotes: libgit2 may first ask for a username
- * (GIT_CREDENTIAL_USERNAME), then for the actual key.
- * The `payload` points to a retry counter so we don't loop forever.
+ * Fork and exec a git command, capturing combined stdout+stderr into buf.
+ * argv must be NULL-terminated (argv[0] == "git").
+ * Returns the process exit code, or -1 on fork/exec failure.
  */
-static int credential_cb(git_credential **out, const char *url,
-                          const char *username_from_url,
-                          unsigned int allowed_types, void *payload) {
-    (void)url;
-    int *retries = (int *)payload;
-    if ((*retries)++ > 3)
-        return GIT_EAUTH;   /* give up to avoid infinite loops */
+static int run_git_capture(const char **argv, char *buf, size_t n) {
+    int pfd[2];
+    if (pipe(pfd) != 0) return -1;
 
-    const char *user = username_from_url ? username_from_url : "git";
-
-    /* 1. Username request (server needs us to supply the username first) */
-    if (allowed_types & GIT_CREDENTIAL_USERNAME)
-        return git_credential_username_new(out, user);
-
-    /* 2. SSH key – try the agent first, then common key files */
-    if (allowed_types & GIT_CREDENTIAL_SSH_KEY) {
-        if (git_credential_ssh_key_from_agent(out, user) == 0)
-            return 0;
-
-        static const char * const KEYS[] = {
-            "id_ed25519", "id_ecdsa", "id_rsa", NULL
-        };
-        const char *home = getenv("HOME");
-        if (home) {
-            char priv[PATH_MAX], pub[PATH_MAX];
-            for (int k = 0; KEYS[k]; k++) {
-                snprintf(priv, sizeof(priv), "%s/.ssh/%s",     home, KEYS[k]);
-                snprintf(pub,  sizeof(pub),  "%s/.ssh/%s.pub", home, KEYS[k]);
-                if (access(priv, R_OK) == 0)
-                    return git_credential_ssh_key_new(out, user, pub, priv, NULL);
-            }
-        }
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pfd[0]); close(pfd[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        close(pfd[0]);
+        dup2(pfd[1], STDOUT_FILENO);
+        dup2(pfd[1], STDERR_FILENO);
+        close(pfd[1]);
+        execvp("git", (char *const *)argv);
+        _exit(127);   /* exec failed: git not in PATH */
     }
 
-    return GIT_EAUTH;
-}
+    close(pfd[1]);
+    size_t total = 0;
+    if (buf && n > 0) {
+        ssize_t nr;
+        while (total + 1 < n &&
+               (nr = read(pfd[0], buf + total, n - total - 1)) > 0)
+            total += (size_t)nr;
+        buf[total] = '\0';
+        /* strip trailing newlines */
+        while (total > 0 && (buf[total-1] == '\n' || buf[total-1] == '\r'))
+            buf[--total] = '\0';
+    }
+    /* drain remaining output */
+    { char tmp[256]; while (read(pfd[0], tmp, sizeof(tmp)) > 0) {} }
+    close(pfd[0]);
 
-static void init_fetch_opts(git_fetch_options *opts, int *retries) {
-    *opts = (git_fetch_options)GIT_FETCH_OPTIONS_INIT;
-    opts->callbacks.credentials = credential_cb;
-    opts->callbacks.payload     = retries;
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
 /* ── Fetch ─────────────────────────────────────────────────────────────────── */
-static FetchResult do_fetch(git_repository *repo) {
+static FetchResult do_fetch(git_repository *repo, Repo *r) {
+    /* local check: does an "origin" remote exist? (no network) */
     git_remote *remote = NULL;
     if (git_remote_lookup(&remote, repo, "origin") != 0)
         return FR_NO_REMOTE;
-
-    int retries = 0;
-    git_fetch_options opts;
-    init_fetch_opts(&opts, &retries);
-    int err = git_remote_fetch(remote, NULL, &opts, NULL);
     git_remote_free(remote);
-    return err == 0 ? FR_FETCHED : FR_ERROR;
+
+    const char *argv[] = { "git", "-C", r->path, "fetch", "--quiet", "origin", NULL };
+    char errbuf[256] = "";
+    int rc = run_git_capture(argv, errbuf, sizeof(errbuf));
+    if (rc != 0) {
+        strncpy(r->net_error, errbuf[0] ? errbuf : "git fetch failed",
+                sizeof(r->net_error) - 1);
+        return FR_ERROR;
+    }
+    return FR_FETCHED;
 }
 
 /* ── Pull (fast-forward only) ──────────────────────────────────────────────── */
@@ -272,90 +294,36 @@ static PullResult do_pull(git_repository *repo, Repo *r) {
     if (r->staged || r->modified)
         return PR_DIRTY;
 
-    /* fetch first */
+    /* local check: does an "origin" remote exist? (no network) */
     git_remote *remote = NULL;
     if (git_remote_lookup(&remote, repo, "origin") != 0)
         return PR_NO_REMOTE;
-
-    int retries = 0;
-    git_fetch_options fetch_opts;
-    init_fetch_opts(&fetch_opts, &retries);
-    int err = git_remote_fetch(remote, NULL, &fetch_opts, NULL);
     git_remote_free(remote);
-    if (err != 0)
-        return PR_ERROR;
 
-    /* resolve current HEAD */
-    git_reference *head = NULL;
-    if (git_repository_head(&head, repo) != 0)
-        return PR_ERROR;
+    const char *argv[] = {
+        "git", "-C", r->path, "pull", "--ff-only", "--no-rebase", NULL
+    };
+    char outbuf[512] = "";
+    int rc = run_git_capture(argv, outbuf, sizeof(outbuf));
 
-    /* find upstream reference name */
-    git_buf upstream_name = GIT_BUF_INIT;
-    if (git_branch_upstream_name(&upstream_name, repo, git_reference_name(head)) != 0) {
-        git_reference_free(head);
+    if (rc == 0) {
+        if (strstr(outbuf, "Already up to date") != NULL)
+            return PR_UP_TO_DATE;
+        return PR_PULLED;
+    }
+
+    /* non-zero exit: classify the failure */
+    if (strstr(outbuf, "Not possible to fast-forward") != NULL ||
+        strstr(outbuf, "not possible to fast-forward") != NULL)
+        return PR_NOT_FF;
+
+    if (strstr(outbuf, "no tracking information") != NULL ||
+        strstr(outbuf, "no upstream configured")  != NULL)
         return PR_NO_REMOTE;
-    }
 
-    git_reference *upstream_ref = NULL;
-    if (git_reference_lookup(&upstream_ref, repo, upstream_name.ptr) != 0) {
-        git_buf_dispose(&upstream_name);
-        git_reference_free(head);
-        return PR_NO_REMOTE;
-    }
-    git_buf_dispose(&upstream_name);
-
-    /* build annotated commit for merge analysis */
-    git_annotated_commit *their_head = NULL;
-    if (git_annotated_commit_from_ref(&their_head, repo, upstream_ref) != 0) {
-        git_reference_free(upstream_ref);
-        git_reference_free(head);
-        return PR_ERROR;
-    }
-
-    git_merge_analysis_t   merge_analysis;
-    git_merge_preference_t merge_preference;
-    const git_annotated_commit *their_heads[1] = { their_head };
-    if (git_merge_analysis(&merge_analysis, &merge_preference,
-                           repo, their_heads, 1) != 0) {
-        git_annotated_commit_free(their_head);
-        git_reference_free(upstream_ref);
-        git_reference_free(head);
-        return PR_ERROR;
-    }
-
-    PullResult result;
-    if (merge_analysis & GIT_MERGE_ANALYSIS_UP_TO_DATE) {
-        result = PR_UP_TO_DATE;
-    } else if (merge_analysis & GIT_MERGE_ANALYSIS_FASTFORWARD) {
-        git_object *target_obj = NULL;
-        if (git_reference_peel(&target_obj, upstream_ref, GIT_OBJECT_COMMIT) != 0) {
-            result = PR_ERROR;
-        } else {
-            git_checkout_options co_opts = GIT_CHECKOUT_OPTIONS_INIT;
-            co_opts.checkout_strategy = GIT_CHECKOUT_SAFE;
-            if (git_checkout_tree(repo, target_obj, &co_opts) != 0) {
-                result = PR_ERROR;
-            } else {
-                git_reference *new_ref = NULL;
-                if (git_reference_set_target(&new_ref, head,
-                                             git_object_id(target_obj), NULL) != 0) {
-                    result = PR_ERROR;
-                } else {
-                    git_reference_free(new_ref);
-                    result = PR_PULLED;
-                }
-            }
-            git_object_free(target_obj);
-        }
-    } else {
-        result = PR_NOT_FF;
-    }
-
-    git_annotated_commit_free(their_head);
-    git_reference_free(upstream_ref);
-    git_reference_free(head);
-    return result;
+    strncpy(r->net_error, outbuf[0] ? outbuf : "git pull failed",
+            sizeof(r->net_error) - 1);
+    return PR_ERROR;
 }
 
 /* ── Process a single repo into a pre-allocated slot ──────────────────────── */
@@ -374,28 +342,27 @@ static void process_repo(const char *path, Repo *r) {
     fill_branch(r, repo);
     fill_status(r, repo);
 
+    /* fetch runs before switch so freshly fetched remote refs are available */
+    if (opt_fetch)
+        r->fetch_result = do_fetch(repo, r);
+
     if (opt_switch) {
         r->switch_result = do_switch(repo, r, opt_switch_branch);
-        if (r->switch_result == SR_SWITCHED) {
+        if (r->switch_result == SR_SWITCHED || r->switch_result == SR_CREATED) {
             fill_branch(r, repo);
             fill_status(r, repo);
         }
     }
 
-    if (opt_fetch) {
-        r->fetch_result = do_fetch(repo);
-        fill_ahead_behind(r, repo);   /* refresh after fetch */
-    } else if (opt_pull) {
+    if (opt_pull) {
         r->pull_result = do_pull(repo, r);
         if (r->pull_result == PR_PULLED) {
             fill_branch(r, repo);
             fill_status(r, repo);
         }
-        fill_ahead_behind(r, repo);   /* refresh after pull */
-    } else {
-        fill_ahead_behind(r, repo);
     }
 
+    fill_ahead_behind(r, repo);
     fill_last_commit(r, repo);
     git_repository_free(repo);
 }

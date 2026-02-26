@@ -75,6 +75,7 @@ Options:
   -s <branch>  Switch all clean repos to <branch> if it exists
   -d <n>       Max search depth (default: 5)
   -a           Include hidden directories
+  -v           Verbose: show all repos in summaries, not just changed ones
   --no-color   Disable ANSI colours
   --version    Show version
   -h, --help   Show this help
@@ -98,13 +99,16 @@ gitls pull ~/projects
 # Switch all clean repos to main
 gitls -s main ~/projects
 
+# Fetch and switch to a branch (creates local tracking branch if needed)
+gitls fetch -s feature-branch ~/projects
+
 # No colours (useful for scripts)
 gitls --no-color ~/projects
 ```
 
 ## Fetch
 
-`gitls fetch` fetches all repos from their `origin` remote and shows the updated ahead/behind status.
+`gitls fetch` fetches all repos from their `origin` remote and shows the updated ahead/behind status. By default, only fetched repos and errors are shown per line. Add `-v` to see all repos including up-to-date and no-remote ones.
 
 ```
 gitls fetch ~/projects
@@ -142,6 +146,8 @@ Pull results:
 - Only fast-forward merges are performed — diverged repos are reported, never force-merged
 - Repos without a remote are listed but skipped
 
+By default, only pulled repos and errors are shown per line. Add `-v` to see all repos including up-to-date and no-remote ones.
+
 ## Branch switching
 
 The `-s` flag switches all clean repositories to a target branch in one command.
@@ -164,6 +170,35 @@ Switched to branch: main
 - A repo is switched only if it has **no staged or modified files** (untracked files are left untouched)
 - If the target branch does not exist in a repo, it is silently skipped
 - After switching, the full status table is shown for all repos
+
+By default, only switched repos and errors are shown per line. Add `-v` to also see repos that were already on the branch or where the branch wasn't found.
+
+### Fetch and switch
+
+Combine `fetch` with `-s` to switch to a branch that only exists on the remote.
+gitls fetches first, then switches — creating a local tracking branch automatically
+if the branch isn't present locally yet.
+
+```
+gitls fetch -s feature-x ~/projects
+
+Switched to branch: feature-x
+
+  api-server        ✓ created & switched
+  frontend          ✓ switched
+  auth-service      · branch not found
+  legacy-app        ✗ skipped  1 modified
+
+  switched 1 · created 1 · skipped 1 dirty
+```
+
+| Result | Meaning |
+|--------|---------|
+| `✓ switched` | Branch existed locally, checked out |
+| `✓ created & switched` | Local tracking branch created from `origin/<branch>`, checked out |
+| `· already on branch` | Already on that branch |
+| `· branch not found` | Branch doesn't exist locally or on `origin` |
+| `✗ skipped` | Repo has staged or modified files |
 
 ## Config file
 

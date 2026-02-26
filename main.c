@@ -15,6 +15,7 @@
 int    opt_max_depth          = 5;
 bool   opt_all                = false;
 bool   opt_no_color           = false;
+bool   opt_verbose            = false;
 bool   opt_switch             = false;
 char   opt_switch_branch[256] = "";
 bool   opt_fetch              = false;
@@ -22,6 +23,16 @@ bool   opt_pull               = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
+
+/* ── Git availability check ────────────────────────────────────────────────── */
+static int git_installed(void) {
+    FILE *f = popen("git --version 2>/dev/null", "r");
+    if (!f) return 0;
+    char buf[4];
+    int found = (fread(buf, 1, 1, f) > 0);
+    pclose(f);
+    return found;
+}
 
 /* ── Usage ─────────────────────────────────────────────────────────────────── */
 static void usage(const char *prog) {
@@ -39,6 +50,7 @@ static void usage(const char *prog) {
         "  -s <branch>  Switch all clean repos to <branch> if it exists\n"
         "  -d <n>       Max search depth (default: 5)\n"
         "  -a           Include hidden directories\n"
+        "  -v           Verbose: show all repos in summaries, not just changed ones\n"
         "  --no-color   Disable ANSI colours\n"
         "  --version    Show version\n"
         "  -h, --help   Show this help\n"
@@ -74,6 +86,8 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("gitls %s\n", VERSION_STRING);
             return 0;
+        } else if (strcmp(argv[i], "-v") == 0) {
+            opt_verbose = true;
         } else if (strcmp(argv[i], "-a") == 0) {
             opt_all = true;
         } else if (strcmp(argv[i], "--no-color") == 0) {
@@ -123,7 +137,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* 5. spinner */
+    /* 5. require git binary for fetch/pull subcommands */
+    if ((opt_fetch || opt_pull) && !git_installed()) {
+        fprintf(stderr, "Error: 'git' is not installed or not in PATH\n");
+        git_libgit2_shutdown();
+        return 1;
+    }
+
+    /* 6. spinner */
     const char *verb = opt_fetch    ? "Fetching:"
                      : opt_pull     ? "Pulling:"
                      : opt_switch   ? "Switching:"

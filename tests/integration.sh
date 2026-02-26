@@ -99,10 +99,111 @@ mkgit "$SD/repo-dirty"
 git -C "$SD/repo-dirty" branch feature
 printf 'dirty\n' >> "$SD/repo-dirty/README"
 
-check "switched"          "switched"         "$GITLS" --no-color -s feature "$SD"
-check "already on branch" "already on branch" "$GITLS" --no-color -s feature "$SD"
-check "skipped dirty"     "skipped"          "$GITLS" --no-color -s feature "$SD"
-check "branch not found"  "branch not found" "$GITLS" --no-color -s feature "$SD"
+check "switched"          "switched"          "$GITLS" --no-color    -s feature "$SD"
+check "already on branch" "already on branch" "$GITLS" --no-color -v -s feature "$SD"
+check "skipped dirty"     "skipped"           "$GITLS" --no-color    -s feature "$SD"
+check "branch not found"  "branch not found"  "$GITLS" --no-color -v -s feature "$SD"
+check "not verbose: already in summary" "already 2" "$GITLS" --no-color -s feature "$SD"
+
+# ── fetch -s: create tracking branch from remote ──────────────────────────────
+printf "\nfetch -s: create tracking branch\n"
+BARE_FS="$WORK/fetchswitch-origin.git"
+git init --bare -q "$BARE_FS"
+FS_SETUP="$WORK/fetchswitch-setup"
+git clone -q "$BARE_FS" "$FS_SETUP"
+git -C "$FS_SETUP" config user.email "test@gitls.test"
+git -C "$FS_SETUP" config user.name "Test"
+printf 'init\n' > "$FS_SETUP/README"
+git -C "$FS_SETUP" add README
+git -C "$FS_SETUP" commit -q -m "init"
+git -C "$FS_SETUP" push -q origin HEAD
+# create feature branch on remote only
+git -C "$FS_SETUP" checkout -q -b feature
+printf 'feature\n' >> "$FS_SETUP/README"
+git -C "$FS_SETUP" add README
+git -C "$FS_SETUP" commit -q -m "feature commit"
+git -C "$FS_SETUP" push -q origin feature
+# clone without feature branch locally
+FS_REPO="$WORK/fetchswitch-repo"
+git clone -q "$BARE_FS" "$FS_REPO"
+git -C "$FS_REPO" config user.email "test@gitls.test"
+git -C "$FS_REPO" config user.name "Test"
+check "created & switched" "created & switched" "$GITLS" --no-color fetch -s feature "$FS_REPO"
+
+# ── fetch -s: branch already exists locally → switched (not created) ──────────
+printf "\nfetch -s: branch exists locally\n"
+BARE_FSL="$WORK/fetchswitch-local-origin.git"
+git init --bare -q "$BARE_FSL"
+FSL_SETUP="$WORK/fetchswitch-local-setup"
+git clone -q "$BARE_FSL" "$FSL_SETUP"
+git -C "$FSL_SETUP" config user.email "test@gitls.test"
+git -C "$FSL_SETUP" config user.name "Test"
+printf 'init\n' > "$FSL_SETUP/README"
+git -C "$FSL_SETUP" add README
+git -C "$FSL_SETUP" commit -q -m "init"
+git -C "$FSL_SETUP" push -q origin HEAD
+FSL_REPO="$WORK/fetchswitch-local-repo"
+git clone -q "$BARE_FSL" "$FSL_REPO"
+git -C "$FSL_REPO" config user.email "test@gitls.test"
+git -C "$FSL_REPO" config user.name "Test"
+git -C "$FSL_REPO" branch feature   # local branch already exists
+check "switched (not created)" "✓ switched" "$GITLS" --no-color fetch -s feature "$FSL_REPO"
+
+# ── fetch -s: branch not found anywhere ───────────────────────────────────────
+printf "\nfetch -s: branch not found\n"
+BARE_FNF="$WORK/fetchswitch-notfound-origin.git"
+git init --bare -q "$BARE_FNF"
+FNF_REPO="$WORK/fetchswitch-notfound-repo"
+git clone -q "$BARE_FNF" "$FNF_REPO"
+git -C "$FNF_REPO" config user.email "test@gitls.test"
+git -C "$FNF_REPO" config user.name "Test"
+printf 'init\n' > "$FNF_REPO/README"
+git -C "$FNF_REPO" add README
+git -C "$FNF_REPO" commit -q -m "init"
+check "branch not found" "not found 1" "$GITLS" --no-color fetch -s ghost "$FNF_REPO"
+
+# ── fetch -s: dirty repo → skipped ────────────────────────────────────────────
+printf "\nfetch -s: dirty repo skipped\n"
+BARE_FSD="$WORK/fetchswitch-dirty-origin.git"
+git init --bare -q "$BARE_FSD"
+FSD_SETUP="$WORK/fetchswitch-dirty-setup"
+git clone -q "$BARE_FSD" "$FSD_SETUP"
+git -C "$FSD_SETUP" config user.email "test@gitls.test"
+git -C "$FSD_SETUP" config user.name "Test"
+printf 'init\n' > "$FSD_SETUP/README"
+git -C "$FSD_SETUP" add README
+git -C "$FSD_SETUP" commit -q -m "init"
+git -C "$FSD_SETUP" checkout -q -b feature
+git -C "$FSD_SETUP" push -q origin feature
+FSD_REPO="$WORK/fetchswitch-dirty-repo"
+git clone -q "$BARE_FSD" "$FSD_REPO"
+git -C "$FSD_REPO" config user.email "test@gitls.test"
+git -C "$FSD_REPO" config user.name "Test"
+printf 'dirty\n' >> "$FSD_REPO/README"
+check "dirty skipped" "skipped" "$GITLS" --no-color fetch -s feature "$FSD_REPO"
+
+# ── fetch: ahead/behind updates after fetch ────────────────────────────────────
+printf "\nfetch: ahead/behind indicator\n"
+BARE_AB="$WORK/aheadbehind-origin.git"
+git init --bare -q "$BARE_AB"
+AB_SETUP="$WORK/aheadbehind-setup"
+git clone -q "$BARE_AB" "$AB_SETUP"
+git -C "$AB_SETUP" config user.email "test@gitls.test"
+git -C "$AB_SETUP" config user.name "Test"
+printf 'init\n' > "$AB_SETUP/README"
+git -C "$AB_SETUP" add README
+git -C "$AB_SETUP" commit -q -m "init"
+git -C "$AB_SETUP" push -q origin HEAD
+AB_REPO="$WORK/aheadbehind-repo"
+git clone -q "$BARE_AB" "$AB_REPO"
+git -C "$AB_REPO" config user.email "test@gitls.test"
+git -C "$AB_REPO" config user.name "Test"
+# push a new commit to origin so AB_REPO is behind
+printf 'remote\n' >> "$AB_SETUP/README"
+git -C "$AB_SETUP" add README
+git -C "$AB_SETUP" commit -q -m "remote commit"
+git -C "$AB_SETUP" push -q origin HEAD
+check "behind shown after fetch" "↓1" "$GITLS" --no-color fetch "$AB_REPO"
 
 # ── flags ─────────────────────────────────────────────────────────────────────
 printf "\nflags\n"
