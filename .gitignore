@@ -1,5 +1,7 @@
 gitls
 *.o
+*.d
 tests/unit
 .vscode/
 ideas.md
+.version

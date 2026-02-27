@@ -1,7 +1,7 @@
 CC      = cc
 TARGET  = gitls
 PREFIX  = /usr/local
-VERSION = 0.1.0
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.1.0")
 SRCS    = main.c repo.c display.c scan.c config.c
 OBJS    = $(SRCS:.c=.o)
 DEPS    = $(OBJS:.o=.d)
@@ -40,8 +40,15 @@ $(TARGET): $(OBJS)
 %.o: %.c gitools.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# main.o also depends on Makefile so VERSION changes trigger a rebuild
-main.o: Makefile
+# Rebuild main.o whenever the version string changes (new git tag, dirty state, etc.)
+# .version is updated only when the content actually changes, avoiding spurious rebuilds.
+.PHONY: _force
+.version: _force
+	@printf '%s' "$(VERSION)" > .version.tmp; \
+	cmp -s .version.tmp .version 2>/dev/null || mv .version.tmp .version; \
+	rm -f .version.tmp
+
+main.o: .version
 
 TEST_OBJS = repo.o display.o scan.o
 
@@ -55,7 +62,8 @@ tests/unit: tests/unit.c $(TEST_OBJS)
 	$(CC) $(CFLAGS) -o $@ tests/unit.c $(TEST_OBJS) $(LDFLAGS)
 
 clean:
-	rm -f $(TARGET) $(OBJS) tests/unit $(DEPS)
+	rm -f $(TARGET) $(OBJS) tests/unit .version
+	find . -name '*.d' -not -path './.git/*' -delete
 
 INSTALL_NAME ?= $(TARGET)
 
@@ -79,6 +87,5 @@ help:
 	@printf "  CC           C compiler (default: cc)\n"
 	@printf "  PREFIX       Install prefix (default: $(PREFIX))\n"
 	@printf "  INSTALL_NAME Binary name (default: $(TARGET))\n"
-	@printf "  VERSION      Version string (default: $(VERSION))\n"
 
 .PHONY: all clean install uninstall test help
