@@ -377,6 +377,22 @@ else
     failed=$((failed + 1))
 fi
 
+# ── config: default_dir overridden by explicit "." ────────────────────────────
+printf "\nconfig: default_dir\n"
+DOT_DIR="$WORK/dottest"
+mkgit "$DOT_DIR/repo"
+OTHER_DIR="$WORK/othertest"
+mkgit "$OTHER_DIR/other"
+printf "default_dir=%s\n" "$OTHER_DIR" > "$CFG"
+# explicit "." should scan current dir, not default_dir
+out=$(cd "$DOT_DIR" && GITLS_CONFIG="$CFG" "$GITLS" --no-color . 2>&1)
+if printf '%s' "$out" | grep -qF "repo" && ! printf '%s' "$out" | grep -qF "other"; then
+    printf "  ok  explicit . overrides default_dir\n"; passed=$((passed + 1))
+else
+    printf "FAIL  explicit . overrides default_dir\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
 # ── cleanup ───────────────────────────────────────────────────────────────────
 rm -rf "$WORK"
 printf "\n%d passed, %d failed\n" "$passed" "$failed"

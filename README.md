@@ -202,7 +202,13 @@ Switched to branch: feature-x
 
 ## Config file
 
-Create `~/.gitlsrc` to set persistent defaults:
+Copy the bundled example to get started:
+
+```sh
+cp /usr/local/share/doc/gitls/gitlsrc.example ~/.gitlsrc
+```
+
+Or create `~/.gitlsrc` manually:
 
 ```ini
 # ~/.gitlsrc
@@ -219,7 +225,14 @@ no_color=false
 | `skip_dirs` | Comma-separated list of directory names to skip (glob patterns supported) | — |
 | `no_color` | Set to `true` or `1` to disable colors | `false` |
 
-CLI flags always override the config file. Set `GITLS_CONFIG=/path/to/file` to use a different config path.
+CLI flags always override the config file. Passing an explicit directory (including `.`) always overrides `default_dir`:
+
+```sh
+gitls .          # scan current directory, ignoring default_dir
+gitls ~/other    # scan a specific directory
+```
+
+Set `GITLS_CONFIG=/path/to/file` to use a different config path.
 
 ## Status indicators
 

@@ -78,6 +78,7 @@ int main(int argc, char **argv) {
 
     /* 3. option parsing – skip the subcommand token */
     const char *scan_dir = ".";
+    bool user_gave_dir = false;
 
     for (int i = 1; i < argc; i++) {
         if (i == subcommand_idx) continue;
@@ -110,6 +111,7 @@ int main(int argc, char **argv) {
             opt_switch_branch[sizeof(opt_switch_branch) - 1] = '\0';
         } else if (argv[i][0] != '-') {
             scan_dir = argv[i];
+            user_gave_dir = true;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             usage(argv[0]);
@@ -124,7 +126,7 @@ int main(int argc, char **argv) {
     }
 
     /* 5. apply config default_dir only when the user gave no directory */
-    if (opt_default_dir[0] != '\0' && strcmp(scan_dir, ".") == 0)
+    if (opt_default_dir[0] != '\0' && !user_gave_dir)
         scan_dir = opt_default_dir;
 
     char abs_dir[PATH_MAX];

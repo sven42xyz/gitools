@@ -70,9 +70,12 @@ INSTALL_NAME ?= $(TARGET)
 install: $(TARGET)
 	install -d $(PREFIX)/bin
 	install -m 755 $(TARGET) $(PREFIX)/bin/$(INSTALL_NAME)
+	install -d $(PREFIX)/share/doc/$(TARGET)
+	install -m 644 gitlsrc.example $(PREFIX)/share/doc/$(TARGET)/gitlsrc.example
 
 uninstall:
 	rm -f $(PREFIX)/bin/$(INSTALL_NAME)
+	rm -f $(PREFIX)/share/doc/$(TARGET)/gitlsrc.example
 
 help:
 	@printf "Usage: make [TARGET] [VARIABLES]\n\n"
