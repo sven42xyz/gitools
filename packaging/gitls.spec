@@ -1,5 +1,5 @@
 Name:           gitls
-Version:        0.1.0
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        A fast, minimal tool to inspect and act on multiple git repositories
 
@@ -33,5 +33,12 @@ It also supports bulk branch switching with the -s flag.
 %{_bindir}/gitls
 
 %changelog
+* Tue Mar 04 2026 Sven Siepermann <sven@siepermann.dev> - 0.3.0-1
+- fetch and pull subcommands for bulk network operations
+- ~/.gitlsrc config file with default_dir, max_depth, skip_dirs, no_color
+- GITLS_CONFIG env var to override config path
+- Two-phase parallel processing (local queries threaded, network sequential)
+- Fix: gitls . respects explicit path over default_dir
+
 * Mon Feb 24 2025 Sven Siepermann <sven@siepermann.dev> - 0.1.0-1
 - Initial package

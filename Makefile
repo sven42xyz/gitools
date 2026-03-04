@@ -1,7 +1,7 @@
 CC      = cc
 TARGET  = gitls
 PREFIX  = /usr/local
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.1.0")
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.3.0")
 SRCS    = main.c repo.c display.c scan.c config.c
 OBJS    = $(SRCS:.c=.o)
 DEPS    = $(OBJS:.o=.d)
