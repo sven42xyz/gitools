@@ -33,7 +33,7 @@ Scanned: /Users/sven/projects
 
 ## Requirements
 
-- [libgit2](https://libgit2.org/) >= 1.0
+- [libgit2](https://libgit2.org/) >= 1.9
 
 ## Installation
 
