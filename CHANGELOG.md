@@ -23,7 +23,7 @@ All notable changes to this project will be documented in this file.
 - Parallel repo processing uses a two-phase design: local libgit2 queries run in a thread pool (Phase 1), subprocess fetch/pull runs sequentially on the main thread (Phase 2) — eliminates fork-in-multithreaded-process issues
 - `make clean` removes all `*.d` dependency files including those in subdirectories
 
-## [0.2.0] – 2025-02-24
+## [0.2.0] – 2026-02-24
 
 ### Added
 - Dynamic column widths — table adapts to the longest repo name and branch name
@@ -34,7 +34,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Parallel repo processing via thread pool (min(nCPU, 8) threads)
 
-## [0.1.0] – 2025-02-24
+## [0.1.0] – 2026-02-24
 
 ### Added
 - Recursive directory scan for git repositories

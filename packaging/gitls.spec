@@ -40,8 +40,8 @@ It also supports bulk branch switching with the -s flag.
 - Two-phase parallel processing (local queries threaded, network sequential)
 - Fix: gitls . respects explicit path over default_dir
 
-* Mon Feb 24 2025 Sven Siepermann <sven@siepermann.dev> - 0.2.0-1
+* Mon Feb 24 2026 Sven Siepermann <sven@siepermann.dev> - 0.2.0-1
 - Minor changes
 
-* Mon Feb 24 2025 Sven Siepermann <sven@siepermann.dev> - 0.1.0-1
+* Mon Feb 24 2026 Sven Siepermann <sven@siepermann.dev> - 0.1.0-1
 - Initial package
