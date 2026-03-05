@@ -378,6 +378,7 @@ static void process_repo_local(const char *path, Repo *r) {
         if (r->switch_result == SR_SWITCHED || r->switch_result == SR_CREATED) {
             fill_branch(r, repo);
             fill_status(r, repo);
+            fill_last_commit(r, repo);
         }
     }
 
@@ -408,6 +409,7 @@ static void process_repo_network(Repo *r) {
             if (r->switch_result == SR_SWITCHED || r->switch_result == SR_CREATED) {
                 fill_branch(r, repo);
                 fill_status(r, repo);
+                fill_last_commit(r, repo);
             }
         }
     }
