@@ -4,11 +4,11 @@ Upstream-Contact: Sven Siepermann <sven@siepermann.dev>
 Source: https://github.com/sven42xyz/gitools
 
 Files: *
-Copyright: 2025 Sven Siepermann <sven@siepermann.dev>
+Copyright: 2026 Sven Siepermann <sven@siepermann.dev>
 License: MIT
 
 Files: debian/*
-Copyright: 2025 Sven Siepermann <sven@siepermann.dev>
+Copyright: 2026 Sven Siepermann <sven@siepermann.dev>
 License: MIT
 
 License: MIT

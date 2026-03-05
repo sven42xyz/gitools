@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
+#include <fnmatch.h>
 #include <sys/stat.h>
 #include <limits.h>
 
@@ -16,18 +17,20 @@ static int should_skip(const char *name) {
     for (int i = 0; SKIP_DIRS[i]; i++)
         if (strcmp(name, SKIP_DIRS[i]) == 0) return 1;
     if (!opt_all && name[0] == '.') return 1;
+    for (size_t i = 0; i < opt_extra_skip_count; i++)
+        if (fnmatch(opt_extra_skip[i], name, 0) == 0) return 1;
     return 0;
 }
 
 void find_repos(const char *path, int depth) {
     if (depth > opt_max_depth) return;
 
-    /* if this directory is a git repo, process it then keep recursing */
+    /* if this directory is a git repo, collect its path then keep recursing */
     char git_path[PATH_MAX];
     int n = snprintf(git_path, sizeof(git_path), "%s/.git", path);
     if (n > 0 && n < (int)sizeof(git_path)) {
         struct stat st;
-        if (stat(git_path, &st) == 0) process_repo(path);
+        if (stat(git_path, &st) == 0) collect_path(path);
     }
 
     DIR *dir = opendir(path);
