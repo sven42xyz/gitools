@@ -69,9 +69,17 @@ int main(int argc, char **argv) {
     /* 1. load config – CLI flags parsed next will override these */
     load_config();
 
-    /* 2. subcommand detection – may appear before or after global flags */
+    /* 2. subcommand detection – may appear before or after global flags.
+     *    Skip option flags and their argument values (-s <branch>, -d <n>)
+     *    so that e.g. "gitls -s fetch" does not misidentify "fetch" as a
+     *    subcommand when it is the branch name for -s. */
     int subcommand_idx = -1;
     for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            if ((strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc)
+                i++; /* skip the option's value token */
+            continue;
+        }
         if (strcmp(argv[i], "fetch") == 0) { opt_fetch = true;  subcommand_idx = i; break; }
         if (strcmp(argv[i], "pull")  == 0) { opt_pull  = true;  subcommand_idx = i; break; }
     }

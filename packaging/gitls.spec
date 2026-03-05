@@ -11,6 +11,7 @@ BuildRequires:  gcc
 BuildRequires:  make
 BuildRequires:  libgit2-devel
 Requires:       libgit2
+Requires:       git
 
 %description
 gitls recursively scans a directory for git repositories and displays

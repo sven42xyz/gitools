@@ -231,15 +231,27 @@ printf "\nfetch: with remote\n"
 BARE="$WORK/fetch-origin.git"
 mkdir -p "$BARE"
 git init --bare -q "$BARE"
+# FETCH_SETUP pushes the initial commit so FETCH_REPO can clone a non-empty repo
+FETCH_SETUP="$WORK/fetch-setup"
+git clone -q "$BARE" "$FETCH_SETUP"
+git -C "$FETCH_SETUP" config user.email "test@gitls.test"
+git -C "$FETCH_SETUP" config user.name "Test"
+printf 'init\n' > "$FETCH_SETUP/README"
+git -C "$FETCH_SETUP" add README
+git -C "$FETCH_SETUP" commit -q -m "init"
+git -C "$FETCH_SETUP" push -q origin HEAD
 FETCH_REPO="$WORK/fetch-repo"
 git clone -q "$BARE" "$FETCH_REPO"
 git -C "$FETCH_REPO" config user.email "test@gitls.test"
 git -C "$FETCH_REPO" config user.name "Test"
-printf 'init\n' > "$FETCH_REPO/README"
-git -C "$FETCH_REPO" add README
-git -C "$FETCH_REPO" commit -q -m "init"
-git -C "$FETCH_REPO" push -q origin HEAD
-check "fetched" "fetched" "$GITLS" --no-color fetch "$FETCH_REPO"
+# FETCH_SETUP pushes another commit; FETCH_REPO is now behind → fetch brings new data
+printf 'second\n' >> "$FETCH_SETUP/README"
+git -C "$FETCH_SETUP" add README
+git -C "$FETCH_SETUP" commit -q -m "second"
+git -C "$FETCH_SETUP" push -q origin HEAD
+check "fetched"      "fetched 1"    "$GITLS" --no-color fetch "$FETCH_REPO"
+# second fetch: nothing new → up to date
+check "up to date"   "up to date 1" "$GITLS" --no-color fetch "$FETCH_REPO"
 
 # ── pull: no remote ───────────────────────────────────────────────────────────
 printf "\npull: no remote\n"
@@ -323,6 +335,22 @@ fi
 printf "\npull -s: rejected\n"
 D="$WORK/pull-s-reject"; mkgit "$D"
 check "pull -s error" "cannot be combined" "$GITLS" --no-color pull -s main "$D"
+
+# ── subcommand detection: option values not misidentified as subcommands ───────
+printf "\nsubcommand detection\n"
+
+# "gitls -s fetch <dir>" – "fetch" is the branch name for -s, not a subcommand
+SUBFETCH="$WORK/subcmd-fetch"
+mkgit "$SUBFETCH/repo"
+git -C "$SUBFETCH/repo" branch fetch
+check "-s with branch named 'fetch' switches" "switched" "$GITLS" --no-color -s fetch "$SUBFETCH"
+
+# "gitls -s pull <dir>" – "pull" is the branch name for -s, not a subcommand
+# (bug: without the fix this triggers pull+switch rejection)
+SUBPULL="$WORK/subcmd-pull"
+mkgit "$SUBPULL/repo"
+git -C "$SUBPULL/repo" branch pull
+check "-s with branch named 'pull' switches" "switched" "$GITLS" --no-color -s pull "$SUBPULL"
 
 # ── detached HEAD ─────────────────────────────────────────────────────────────
 printf "\ndetached HEAD\n"

@@ -281,13 +281,33 @@ static FetchResult do_fetch(git_repository *repo, Repo *r) {
         return FR_NO_REMOTE;
     git_remote_free(remote);
 
-    const char *argv[] = { "git", "-C", r->path, "fetch", "--quiet", "origin", NULL };
+    /* snapshot the remote-tracking ref before fetching so we can detect changes */
+    char refspec[320] = "";
+    char ref_before[128] = "";
+    bool have_before = false;
+    if (r->branch[0] != '\0' && r->branch[0] != '(') {
+        snprintf(refspec, sizeof(refspec), "refs/remotes/origin/%s", r->branch);
+        const char *rp_argv[] = { "git", "-C", r->path, "rev-parse", "--verify", refspec, NULL };
+        have_before = (run_git_capture(rp_argv, ref_before, sizeof(ref_before)) == 0
+                       && ref_before[0] != '\0');
+    }
+
+    const char *fetch_argv[] = { "git", "-C", r->path, "fetch", "--quiet", "origin", NULL };
     char errbuf[256] = "";
-    int rc = run_git_capture(argv, errbuf, sizeof(errbuf));
+    int rc = run_git_capture(fetch_argv, errbuf, sizeof(errbuf));
     if (rc != 0) {
         strncpy(r->net_error, errbuf[0] ? errbuf : "git fetch failed",
                 sizeof(r->net_error) - 1);
         return FR_ERROR;
+    }
+
+    /* compare ref after fetch; unchanged → nothing new was downloaded */
+    if (have_before) {
+        char ref_after[128] = "";
+        const char *rp_argv[] = { "git", "-C", r->path, "rev-parse", "--verify", refspec, NULL };
+        if (run_git_capture(rp_argv, ref_after, sizeof(ref_after)) == 0
+                && strcmp(ref_before, ref_after) == 0)
+            return FR_UP_TO_DATE;
     }
     return FR_FETCHED;
 }
@@ -454,6 +474,9 @@ void process_all_repos(void) {
         }
         for (int i = 0; i < created; i++)
             pthread_join(threads[i], NULL);
+
+        if (created == 0)
+            worker_thread(NULL);
 
         free(threads);
     }

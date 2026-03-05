@@ -33,7 +33,8 @@ Scanned: /Users/sven/projects
 
 ## Requirements
 
-- [libgit2](https://libgit2.org/) >= 1.9
+- [libgit2](https://libgit2.org/) >= v1.9
+- [git](https://git-scm.com/) (required for `fetch` and `pull` subcommands)
 
 ## Installation
 

@@ -432,7 +432,9 @@ static void *spinner_run(void *arg) {
 void spinner_start(const char *msg) {
     if (!isatty(STDOUT_FILENO) || opt_no_color) return;
     atomic_store(&spinner_active, 1);
-    pthread_create(&spinner_tid, NULL, spinner_run, (void *)msg);
+    if (pthread_create(&spinner_tid, NULL, spinner_run, (void *)msg) != 0) {
+        atomic_store(&spinner_active, 0);
+    };
 }
 
 void spinner_stop(void) {
