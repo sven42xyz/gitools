@@ -1,4 +1,8 @@
 gitls
 *.o
+*.d
 tests/unit
 .vscode/
+ideas.md
+.version
+PLAN_commit.md

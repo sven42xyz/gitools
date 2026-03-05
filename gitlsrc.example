@@ -1,0 +1,18 @@
+# gitls configuration file
+# Copy to ~/.gitlsrc to activate, or set GITLS_CONFIG=/path/to/file
+#
+# CLI flags always take precedence over these settings.
+
+# Directory to scan when no DIRECTORY argument is given on the CLI.
+# Passing an explicit path (including ".") always overrides this.
+# default_dir=~/projects
+
+# Maximum directory recursion depth (default: 5)
+# max_depth=3
+
+# Comma-separated list of directory names to skip.
+# Glob patterns are supported: *, ?, [abc]
+# skip_dirs=build,dist,tmp,node_modules,*.egg-info
+
+# Disable ANSI colors (true or 1)
+# no_color=false
