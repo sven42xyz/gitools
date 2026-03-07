@@ -246,8 +246,6 @@ static int run_git_capture(const char **argv, char *buf, size_t n) {
         dup2(pfd[1], STDOUT_FILENO);
         dup2(pfd[1], STDERR_FILENO);
         close(pfd[1]);
-        /* Force English output so string matching in do_pull() is locale-safe */
-        setenv("LC_ALL", "C", 1);
         execvp("git", (char *const *)argv);
         _exit(127);   /* exec failed: git not in PATH */
     }
@@ -428,14 +426,48 @@ static void process_repo_network(Repo *r) {
 
 /* ── Thread pool ────────────────────────────────────────────────────────────── */
 static _Atomic size_t work_idx = 0;
+static _Atomic size_t net_idx  = 0;
 
 static void *worker_thread(void *arg) {
     (void)arg;
     size_t i;
-    while ((i = atomic_fetch_add(&work_idx, 1)) < g_path_count) {
+    while ((i = atomic_fetch_add(&work_idx, 1)) < g_path_count)
         process_repo_local(g_paths[i], &g_repos[i]);
-    }
     return NULL;
+}
+
+static void *net_worker_thread(void *arg) {
+    (void)arg;
+    size_t i;
+    while ((i = atomic_fetch_add(&net_idx, 1)) < g_repo_count)
+        process_repo_network(&g_repos[i]);
+    return NULL;
+}
+
+/* Spawn up to nthreads threads running fn, fall back to single-threaded. */
+static void run_thread_pool(int nthreads, void *(*fn)(void *)) {
+    if (nthreads <= 1) {
+        fn(NULL);
+        return;
+    }
+    pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
+    if (!threads) { fn(NULL); return; }
+
+    int created = 0;
+    for (int i = 0; i < nthreads; i++) {
+        if (pthread_create(&threads[i], NULL, fn, NULL) != 0) {
+            fprintf(stderr, "Warning: could not create worker thread %d\n", i);
+            break;
+        }
+        created++;
+    }
+    for (int i = 0; i < created; i++)
+        pthread_join(threads[i], NULL);
+
+    if (created == 0)
+        fn(NULL);
+
+    free(threads);
 }
 
 /* ── process_all_repos ─────────────────────────────────────────────────────── */
@@ -457,38 +489,17 @@ void process_all_repos(void) {
     if (nthreads > 8) nthreads = 8;
     if ((size_t)nthreads > g_path_count) nthreads = (int)g_path_count;
 
-    atomic_store(&work_idx, 0);
-
     /* ── Phase 1: parallel local libgit2 queries ── */
-    if (nthreads == 1) {
-        worker_thread(NULL);
-    } else {
-        pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
-        if (!threads) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    atomic_store(&work_idx, 0);
+    run_thread_pool(nthreads, worker_thread);
 
-        int created = 0;
-        for (int i = 0; i < nthreads; i++) {
-            if (pthread_create(&threads[i], NULL, worker_thread, NULL) != 0) {
-                fprintf(stderr, "Warning: could not create worker thread %d\n", i);
-                break;
-            }
-            created++;
-        }
-        for (int i = 0; i < created; i++)
-            pthread_join(threads[i], NULL);
-
-        if (created == 0)
-            worker_thread(NULL);
-
-        free(threads);
-    }
-
-    /* ── Phase 2: sequential subprocess fetch/pull (no concurrent threads) ──
-     * All worker threads have joined. Stop the spinner before fork so no
-     * other thread is running while the child process is created. */
+    /* ── Phase 2: parallel subprocess fetch/pull ──
+     * All Phase 1 threads have joined. LC_ALL=C is set in the parent (main.c)
+     * before any threads start, so fork() in run_git_capture only executes
+     * dup2+execvp — pure syscalls, no libc locks. Safe to run concurrently
+     * with the spinner thread. */
     if (opt_fetch || opt_pull) {
-        spinner_stop();   /* idempotent; main.c will call it again harmlessly */
-        for (size_t i = 0; i < g_repo_count; i++)
-            process_repo_network(&g_repos[i]);
+        atomic_store(&net_idx, 0);
+        run_thread_pool(nthreads, net_worker_thread);
     }
 }

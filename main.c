@@ -66,6 +66,11 @@ static void usage(const char *prog) {
 
 /* ── main ──────────────────────────────────────────────────────────────────── */
 int main(int argc, char **argv) {
+    /* Force English git output for string matching in do_pull/do_fetch.
+     * Set here in the parent before any threads start so the child in
+     * run_git_capture only needs dup2+execvp (no libc locks between fork/exec). */
+    setenv("LC_ALL", "C", 1);
+
     /* 1. load config – CLI flags parsed next will override these */
     load_config();
 
