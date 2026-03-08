@@ -1,7 +1,7 @@
 class Gitls < Formula
   desc "A fast, minimal tool to inspect and act on multiple git repositories"
   homepage "https://github.com/sven42xyz/gitools"
-  url "https://github.com/sven42xyz/gitools/archive/refs/tags/v0.3.0.tar.gz"
+  url "https://github.com/sven42xyz/gitools/archive/refs/tags/v0.3.1.tar.gz"
   sha256 "PLACEHOLDER_UPDATE_AFTER_RELEASE"
   license "MIT"
   head "https://github.com/sven42xyz/gitools.git", branch: "main"

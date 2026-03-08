@@ -104,6 +104,7 @@ extern size_t g_path_count;
 void load_config(void);
 
 /* repo.c */
+void resolve_git_path(void);
 void collect_path(const char *path);
 void process_all_repos(void);
 

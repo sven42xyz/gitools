@@ -164,12 +164,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* 6. require git binary for fetch/pull subcommands */
+    /* 6. require git binary for fetch/pull subcommands; resolve its absolute
+     *    path here (single-threaded) so run_git_capture can use execve instead
+     *    of execvp — execve is async-signal-safe, execvp is not. */
     if ((opt_fetch || opt_pull) && !git_installed()) {
         fprintf(stderr, "Error: 'git' is not installed or not in PATH\n");
         git_libgit2_shutdown();
         return 1;
     }
+    if (opt_fetch || opt_pull)
+        resolve_git_path();
 
     /* 7. spinner */
     const char *verb = opt_fetch    ? "Fetching:"

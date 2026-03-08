@@ -9,10 +9,40 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/wait.h>
+
+extern char **environ;
 #include "gitools.h"
 
 /* Suppress noisy -Wmissing-field-initializers triggered by libgit2 macros */
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
+/* ── Git binary path (resolved once in main before threads start) ───────────── */
+static char g_git_path[PATH_MAX] = "";
+
+/*
+ * Walk PATH and store the first executable named "git" in g_git_path.
+ * Must be called from the main thread before any threads are spawned so that
+ * run_git_capture can use execve(g_git_path) instead of execvp("git").
+ * execve is a direct syscall (async-signal-safe); execvp calls getenv+malloc.
+ */
+void resolve_git_path(void) {
+    const char *path_env = getenv("PATH");
+    if (!path_env) return;
+    const char *p = path_env;
+    while (*p) {
+        const char *end = strchr(p, ':');
+        size_t dlen = end ? (size_t)(end - p) : strlen(p);
+        char candidate[PATH_MAX];
+        if (snprintf(candidate, sizeof(candidate), "%.*s/git", (int)dlen, p) < (int)sizeof(candidate)
+                && access(candidate, X_OK) == 0) {
+            strncpy(g_git_path, candidate, sizeof(g_git_path) - 1);
+            g_git_path[sizeof(g_git_path) - 1] = '\0';
+            return;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+}
 
 /* ── Path collection (filled by scan.c) ────────────────────────────────────── */
 char  **g_paths      = NULL;
@@ -246,8 +276,13 @@ static int run_git_capture(const char **argv, char *buf, size_t n) {
         dup2(pfd[1], STDOUT_FILENO);
         dup2(pfd[1], STDERR_FILENO);
         close(pfd[1]);
-        execvp("git", (char *const *)argv);
-        _exit(127);   /* exec failed: git not in PATH */
+        /* execve is a direct syscall (async-signal-safe); execvp is not.
+         * g_git_path is resolved in the parent before any threads start. */
+        if (g_git_path[0])
+            execve(g_git_path, (char *const *)argv, environ);
+        else
+            execvp("git", (char *const *)argv);  /* fallback: should not happen */
+        _exit(127);   /* exec failed */
     }
 
     close(pfd[1]);
@@ -494,10 +529,10 @@ void process_all_repos(void) {
     run_thread_pool(nthreads, worker_thread);
 
     /* ── Phase 2: parallel subprocess fetch/pull ──
-     * All Phase 1 threads have joined. LC_ALL=C is set in the parent (main.c)
-     * before any threads start, so fork() in run_git_capture only executes
-     * dup2+execvp — pure syscalls, no libc locks. Safe to run concurrently
-     * with the spinner thread. */
+     * All Phase 1 threads have joined. g_git_path is resolved and LC_ALL=C is
+     * set in the parent before any threads start. The child in run_git_capture
+     * only calls dup2+execve (both async-signal-safe syscalls) — no libc locks
+     * are acquired, so fork() is safe to call concurrently with the spinner. */
     if (opt_fetch || opt_pull) {
         atomic_store(&net_idx, 0);
         run_thread_pool(nthreads, net_worker_thread);
