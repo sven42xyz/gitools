@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] – 2026-03-08
+
+### Fixed
+- `fetch` and `pull` now run in parallel (thread pool), significantly faster on directories with many repos
+- Spinner stays visible during network operations instead of stopping early after Phase 1
+- `fork()` safety: replaced `execvp` with `execve` using a pre-resolved absolute git path, eliminating a potential deadlock when the spinner thread holds a libc lock at fork time
+- `fetch` now correctly returns "up to date" when no new commits were downloaded (previously always reported "fetched")
+- `-s fetch` and `-s pull` no longer misidentify the branch name as a subcommand
+- Last-commit time (WHEN column) is now refreshed after a successful branch switch
+- Thread pool falls back to single-threaded execution if all `pthread_create` calls fail
+
+### Changed
+- RPM spec: added `Requires: git` (needed for fetch/pull subcommands)
+
 ## [0.3.0] – 2026-02-28
 
 ### Added

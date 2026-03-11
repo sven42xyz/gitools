@@ -9,10 +9,40 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/wait.h>
+
+extern char **environ;
 #include "gitools.h"
 
 /* Suppress noisy -Wmissing-field-initializers triggered by libgit2 macros */
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
+/* ── Git binary path (resolved once in main before threads start) ───────────── */
+static char g_git_path[PATH_MAX] = "";
+
+/*
+ * Walk PATH and store the first executable named "git" in g_git_path.
+ * Must be called from the main thread before any threads are spawned so that
+ * run_git_capture can use execve(g_git_path) instead of execvp("git").
+ * execve is a direct syscall (async-signal-safe); execvp calls getenv+malloc.
+ */
+void resolve_git_path(void) {
+    const char *path_env = getenv("PATH");
+    if (!path_env) return;
+    const char *p = path_env;
+    while (*p) {
+        const char *end = strchr(p, ':');
+        size_t dlen = end ? (size_t)(end - p) : strlen(p);
+        char candidate[PATH_MAX];
+        if (snprintf(candidate, sizeof(candidate), "%.*s/git", (int)dlen, p) < (int)sizeof(candidate)
+                && access(candidate, X_OK) == 0) {
+            strncpy(g_git_path, candidate, sizeof(g_git_path) - 1);
+            g_git_path[sizeof(g_git_path) - 1] = '\0';
+            return;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+}
 
 /* ── Path collection (filled by scan.c) ────────────────────────────────────── */
 char  **g_paths      = NULL;
@@ -246,10 +276,14 @@ static int run_git_capture(const char **argv, char *buf, size_t n) {
         dup2(pfd[1], STDOUT_FILENO);
         dup2(pfd[1], STDERR_FILENO);
         close(pfd[1]);
-        /* Force English output so string matching in do_pull() is locale-safe */
-        setenv("LC_ALL", "C", 1);
-        execvp("git", (char *const *)argv);
-        _exit(127);   /* exec failed: git not in PATH */
+        /* execve is a direct syscall (async-signal-safe); execvp is not.
+         * g_git_path is resolved in the parent before any threads start.
+         * If g_git_path is somehow empty, exit immediately — do not fall
+         * back to execvp, which calls getenv/malloc and is not
+         * async-signal-safe. */
+        if (g_git_path[0])
+            execve(g_git_path, (char *const *)argv, environ);
+        _exit(127);   /* execve failed or g_git_path not resolved */
     }
 
     close(pfd[1]);
@@ -390,10 +424,11 @@ static void process_repo_local(const char *path, Repo *r) {
     git_repository_free(repo);
 }
 
-/* ── Phase 2: subprocess fetch/pull (sequential, main thread only) ──────────── */
+/* ── Phase 2: subprocess fetch/pull (called from net_worker_thread pool) ────── */
 /*
- * Called after all worker threads have joined — no other threads are running.
- * fork/exec is safe here: no concurrent threads, no locked mutexes to inherit.
+ * Called concurrently from the Phase 2 thread pool after all Phase 1 workers
+ * have joined. Only async-signal-safe syscalls (dup2, execve) are used between
+ * fork and exec in run_git_capture, so concurrent fork() calls are safe.
  */
 static void process_repo_network(Repo *r) {
     if (r->path[0] == '\0') return;   /* slot that failed to open in phase 1 */
@@ -428,14 +463,48 @@ static void process_repo_network(Repo *r) {
 
 /* ── Thread pool ────────────────────────────────────────────────────────────── */
 static _Atomic size_t work_idx = 0;
+static _Atomic size_t net_idx  = 0;
 
 static void *worker_thread(void *arg) {
     (void)arg;
     size_t i;
-    while ((i = atomic_fetch_add(&work_idx, 1)) < g_path_count) {
+    while ((i = atomic_fetch_add(&work_idx, 1)) < g_path_count)
         process_repo_local(g_paths[i], &g_repos[i]);
-    }
     return NULL;
+}
+
+static void *net_worker_thread(void *arg) {
+    (void)arg;
+    size_t i;
+    while ((i = atomic_fetch_add(&net_idx, 1)) < g_repo_count)
+        process_repo_network(&g_repos[i]);
+    return NULL;
+}
+
+/* Spawn up to nthreads threads running fn, fall back to single-threaded. */
+static void run_thread_pool(int nthreads, void *(*fn)(void *)) {
+    if (nthreads <= 1) {
+        fn(NULL);
+        return;
+    }
+    pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
+    if (!threads) { fn(NULL); return; }
+
+    int created = 0;
+    for (int i = 0; i < nthreads; i++) {
+        if (pthread_create(&threads[i], NULL, fn, NULL) != 0) {
+            fprintf(stderr, "Warning: could not create worker thread %d\n", i);
+            break;
+        }
+        created++;
+    }
+    for (int i = 0; i < created; i++)
+        pthread_join(threads[i], NULL);
+
+    if (created == 0)
+        fn(NULL);
+
+    free(threads);
 }
 
 /* ── process_all_repos ─────────────────────────────────────────────────────── */
@@ -457,38 +526,17 @@ void process_all_repos(void) {
     if (nthreads > 8) nthreads = 8;
     if ((size_t)nthreads > g_path_count) nthreads = (int)g_path_count;
 
-    atomic_store(&work_idx, 0);
-
     /* ── Phase 1: parallel local libgit2 queries ── */
-    if (nthreads == 1) {
-        worker_thread(NULL);
-    } else {
-        pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
-        if (!threads) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    atomic_store(&work_idx, 0);
+    run_thread_pool(nthreads, worker_thread);
 
-        int created = 0;
-        for (int i = 0; i < nthreads; i++) {
-            if (pthread_create(&threads[i], NULL, worker_thread, NULL) != 0) {
-                fprintf(stderr, "Warning: could not create worker thread %d\n", i);
-                break;
-            }
-            created++;
-        }
-        for (int i = 0; i < created; i++)
-            pthread_join(threads[i], NULL);
-
-        if (created == 0)
-            worker_thread(NULL);
-
-        free(threads);
-    }
-
-    /* ── Phase 2: sequential subprocess fetch/pull (no concurrent threads) ──
-     * All worker threads have joined. Stop the spinner before fork so no
-     * other thread is running while the child process is created. */
+    /* ── Phase 2: parallel subprocess fetch/pull ──
+     * All Phase 1 threads have joined. g_git_path is resolved and LC_ALL=C is
+     * set in the parent before any threads start. The child in run_git_capture
+     * only calls dup2+execve (both async-signal-safe syscalls) — no libc locks
+     * are acquired, so fork() is safe to call concurrently with the spinner. */
     if (opt_fetch || opt_pull) {
-        spinner_stop();   /* idempotent; main.c will call it again harmlessly */
-        for (size_t i = 0; i < g_repo_count; i++)
-            process_repo_network(&g_repos[i]);
+        atomic_store(&net_idx, 0);
+        run_thread_pool(nthreads, net_worker_thread);
     }
 }
