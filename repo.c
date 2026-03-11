@@ -277,12 +277,13 @@ static int run_git_capture(const char **argv, char *buf, size_t n) {
         dup2(pfd[1], STDERR_FILENO);
         close(pfd[1]);
         /* execve is a direct syscall (async-signal-safe); execvp is not.
-         * g_git_path is resolved in the parent before any threads start. */
+         * g_git_path is resolved in the parent before any threads start.
+         * If g_git_path is somehow empty, exit immediately — do not fall
+         * back to execvp, which calls getenv/malloc and is not
+         * async-signal-safe. */
         if (g_git_path[0])
             execve(g_git_path, (char *const *)argv, environ);
-        else
-            execvp("git", (char *const *)argv);  /* fallback: should not happen */
-        _exit(127);   /* exec failed */
+        _exit(127);   /* execve failed or g_git_path not resolved */
     }
 
     close(pfd[1]);
@@ -423,10 +424,11 @@ static void process_repo_local(const char *path, Repo *r) {
     git_repository_free(repo);
 }
 
-/* ── Phase 2: subprocess fetch/pull (sequential, main thread only) ──────────── */
+/* ── Phase 2: subprocess fetch/pull (called from net_worker_thread pool) ────── */
 /*
- * Called after all worker threads have joined — no other threads are running.
- * fork/exec is safe here: no concurrent threads, no locked mutexes to inherit.
+ * Called concurrently from the Phase 2 thread pool after all Phase 1 workers
+ * have joined. Only async-signal-safe syscalls (dup2, execve) are used between
+ * fork and exec in run_git_capture, so concurrent fork() calls are safe.
  */
 static void process_repo_network(Repo *r) {
     if (r->path[0] == '\0') return;   /* slot that failed to open in phase 1 */
