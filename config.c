@@ -106,6 +106,42 @@ void load_config(void) {
             opt_extra_skip_count = idx;
             free(copy);
 
+        } else if (strcmp(key, "protected_branches") == 0) {
+#define MAX_PROTECTED_BRANCHES 64
+            char *copy = strdup(val);
+            if (!copy) continue;
+
+            size_t count = 1;
+            for (const char *p = copy; *p; p++)
+                if (*p == ',') count++;
+            if (count > MAX_PROTECTED_BRANCHES) count = MAX_PROTECTED_BRANCHES;
+
+            char **arr = malloc(count * sizeof(char *));
+            if (!arr) { free(copy); continue; }
+
+            size_t idx = 0;
+            char *tok = strtok(copy, ",");
+            while (tok && idx < count) {
+                char *dup = strdup(tok);
+                if (!dup) {
+                    for (size_t i = 0; i < idx; i++) free(arr[i]);
+                    free(arr);
+                    free(copy);
+                    goto next_line;
+                }
+                arr[idx++] = dup;
+                tok = strtok(NULL, ",");
+            }
+
+            if (opt_protected_branches) {
+                for (size_t i = 0; i < opt_protected_branches_count; i++)
+                    free(opt_protected_branches[i]);
+                free(opt_protected_branches);
+            }
+            opt_protected_branches       = arr;
+            opt_protected_branches_count = idx;
+            free(copy);
+
         } else if (strcmp(key, "no_color") == 0) {
             if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
                 opt_no_color = true;

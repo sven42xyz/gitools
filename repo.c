@@ -587,6 +587,16 @@ static void fill_stale_branches(Repo *r, git_repository *repo) {
             continue;
         }
 
+        /* Always protect main/master implicitly; they are conventional default
+         * branches and should never be flagged even when not the resolved
+         * default of this particular repo. */
+        int is_protected = (strcmp(name, "main") == 0 || strcmp(name, "master") == 0);
+        for (size_t k = 0; !is_protected && k < opt_protected_branches_count; k++) {
+            if (strcmp(name, opt_protected_branches[k]) == 0)
+                is_protected = 1;
+        }
+        if (is_protected) { git_reference_free(ref); continue; }
+
         /* GONE: upstream is configured but the remote-tracking ref doesn't exist. */
         git_buf upstream_name = GIT_BUF_INIT;
         int has_upstream_cfg =

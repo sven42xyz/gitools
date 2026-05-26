@@ -25,6 +25,8 @@ bool   opt_yes                   = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip            = NULL;
 size_t opt_extra_skip_count      = 0;
+char **opt_protected_branches    = NULL;
+size_t opt_protected_branches_count = 0;
 
 static int passed = 0, failed = 0;
 

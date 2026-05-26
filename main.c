@@ -27,6 +27,8 @@ bool   opt_yes                = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
+char **opt_protected_branches = NULL;
+size_t opt_protected_branches_count = 0;
 
 /* ── Git availability check ────────────────────────────────────────────────── */
 static int git_installed(void) {
@@ -69,6 +71,7 @@ static void usage(const char *prog) {
         "  default_dir=~/projects\n"
         "  max_depth=3\n"
         "  skip_dirs=build,dist,tmp\n"
+        "  protected_branches=develop,staging\n"
         "  no_color=true\n",
         prog);
 }
@@ -290,6 +293,11 @@ cleanup:
         for (size_t i = 0; i < opt_extra_skip_count; i++)
             free(opt_extra_skip[i]);
         free(opt_extra_skip);
+    }
+    if (opt_protected_branches) {
+        for (size_t i = 0; i < opt_protected_branches_count; i++)
+            free(opt_protected_branches[i]);
+        free(opt_protected_branches);
     }
     git_libgit2_shutdown();
     return 0;

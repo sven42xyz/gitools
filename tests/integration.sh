@@ -501,6 +501,31 @@ else
     failed=$((failed + 1))
 fi
 
+# ── stale: protected_branches config skips listed branches ───────────────────
+printf "\nstale: protected_branches config\n"
+D="$WORK/stale-protected"; mkmain "$D"
+git -C "$D" checkout -q -b develop
+git -C "$D" commit -q --allow-empty -m "dev work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff develop -m "merge develop"
+# Without the config, develop would be listed as merged.
+printf 'protected_branches=develop\n' > "$CFG"
+check "develop omitted via config" "No stale branches found" \
+    env GITLS_CONFIG="$CFG" "$GITLS" --no-color stale "$D"
+
+# ── stale: main/master implicitly protected ───────────────────────────────────
+printf "\nstale: main/master implicit protection\n"
+D="$WORK/stale-implicit"; mkgit "$D"
+# Force default to master so a separate 'main' branch could otherwise be flagged
+git -C "$D" branch -m master 2>/dev/null
+git -C "$D" checkout -q -b main
+git -C "$D" commit -q --allow-empty -m "extra"
+git -C "$D" checkout -q master
+git -C "$D" merge -q --no-ff main -m "merge main into master"
+# Both default (master) and 'main' should be excluded.
+check "main not flagged on master-default repo" "No stale branches found" \
+    "$GITLS" --no-color stale "$D"
+
 # ── stale: squash-merged branch detected ──────────────────────────────────────
 printf "\nstale: squash-merged\n"
 D="$WORK/stale-squash"; mkmain "$D"

@@ -117,6 +117,8 @@ extern bool   opt_yes;
 extern char   opt_default_dir[PATH_MAX];
 extern char **opt_extra_skip;
 extern size_t opt_extra_skip_count;
+extern char **opt_protected_branches;
+extern size_t opt_protected_branches_count;
 
 /* ── Repo collection (defined in repo.c) ──────────────────────────────────── */
 extern Repo  *g_repos;
