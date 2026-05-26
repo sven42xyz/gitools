@@ -383,6 +383,133 @@ static PullResult do_pull(git_repository *repo, Repo *r) {
     return PR_ERROR;
 }
 
+/* ── Patch-id cache for squash-merge detection ─────────────────────────────── */
+/*
+ * Squash-merge detection compares each candidate branch's cumulative diff
+ * (merge-base → branch tip) against the patch-id of each recent default-branch
+ * commit. A match means the branch's work was squashed into a single default
+ * commit and the branch can be considered merged.
+ *
+ * We cap the default-branch walk at SQUASH_DEFAULT_DEPTH commits to bound the
+ * cost on large histories — squash merges are typically recent.
+ */
+#define SQUASH_DEFAULT_DEPTH 500
+
+static int commit_first_parent_patchid(git_repository *repo, const git_oid *commit_oid,
+                                       git_oid *out) {
+    git_commit *commit = NULL;
+    if (git_commit_lookup(&commit, repo, commit_oid) != 0) return -1;
+
+    git_tree *new_tree = NULL;
+    if (git_commit_tree(&new_tree, commit) != 0) {
+        git_commit_free(commit);
+        return -1;
+    }
+
+    git_tree *old_tree = NULL;
+    if (git_commit_parentcount(commit) > 0) {
+        git_commit *parent = NULL;
+        if (git_commit_parent(&parent, commit, 0) == 0) {
+            git_commit_tree(&old_tree, parent);
+            git_commit_free(parent);
+        }
+    }
+
+    git_diff *diff = NULL;
+    int rc = -1;
+    if (git_diff_tree_to_tree(&diff, repo, old_tree, new_tree, NULL) == 0) {
+        if (git_diff_patchid(out, diff, NULL) == 0) rc = 0;
+        git_diff_free(diff);
+    }
+
+    if (old_tree) git_tree_free(old_tree);
+    git_tree_free(new_tree);
+    git_commit_free(commit);
+    return rc;
+}
+
+static int branch_cumulative_patchid(git_repository *repo, const git_oid *branch_tip,
+                                     const git_oid *default_tip, git_oid *out) {
+    git_oid mb;
+    if (git_merge_base(&mb, repo, branch_tip, default_tip) != 0) return -1;
+
+    git_commit *mb_commit = NULL, *branch_commit = NULL;
+    if (git_commit_lookup(&mb_commit, repo, &mb) != 0) return -1;
+    if (git_commit_lookup(&branch_commit, repo, branch_tip) != 0) {
+        git_commit_free(mb_commit);
+        return -1;
+    }
+
+    git_tree *mb_tree = NULL, *branch_tree = NULL;
+    git_commit_tree(&mb_tree, mb_commit);
+    git_commit_tree(&branch_tree, branch_commit);
+
+    int rc = -1;
+    if (mb_tree && branch_tree) {
+        git_diff *diff = NULL;
+        if (git_diff_tree_to_tree(&diff, repo, mb_tree, branch_tree, NULL) == 0) {
+            if (git_diff_patchid(out, diff, NULL) == 0) rc = 0;
+            git_diff_free(diff);
+        }
+    }
+
+    if (mb_tree) git_tree_free(mb_tree);
+    if (branch_tree) git_tree_free(branch_tree);
+    git_commit_free(mb_commit);
+    git_commit_free(branch_commit);
+    return rc;
+}
+
+/*
+ * Walk the default branch (up to SQUASH_DEFAULT_DEPTH commits), compute each
+ * commit's first-parent patch-id, and return them as a newly allocated array.
+ * Caller must free *out_ids.
+ */
+static int build_default_patchids(git_repository *repo, const git_oid *default_tip,
+                                  git_oid **out_ids, size_t *out_count) {
+    *out_ids = NULL;
+    *out_count = 0;
+
+    git_revwalk *walk = NULL;
+    if (git_revwalk_new(&walk, repo) != 0) return -1;
+    if (git_revwalk_push(walk, default_tip) != 0) {
+        git_revwalk_free(walk);
+        return -1;
+    }
+
+    size_t cap = 64;
+    git_oid *ids = malloc(cap * sizeof(*ids));
+    if (!ids) { git_revwalk_free(walk); return -1; }
+    size_t count = 0;
+
+    git_oid commit_oid;
+    int seen = 0;
+    while (seen < SQUASH_DEFAULT_DEPTH && git_revwalk_next(&commit_oid, walk) == 0) {
+        seen++;
+        git_oid pid;
+        if (commit_first_parent_patchid(repo, &commit_oid, &pid) != 0) continue;
+        if (count >= cap) {
+            size_t ncap = cap * 2;
+            git_oid *tmp = realloc(ids, ncap * sizeof(*ids));
+            if (!tmp) { free(ids); git_revwalk_free(walk); return -1; }
+            ids = tmp;
+            cap = ncap;
+        }
+        git_oid_cpy(&ids[count++], &pid);
+    }
+
+    git_revwalk_free(walk);
+    *out_ids = ids;
+    *out_count = count;
+    return 0;
+}
+
+static int patchid_in_set(const git_oid *needle, const git_oid *set, size_t count) {
+    for (size_t i = 0; i < count; i++)
+        if (git_oid_cmp(needle, &set[i]) == 0) return 1;
+    return 0;
+}
+
 /* ── Stale branches ────────────────────────────────────────────────────────── */
 /*
  * Detect local branches that are either:
@@ -431,6 +558,12 @@ static void fill_stale_branches(Repo *r, git_repository *repo) {
         }
     }
 
+    /* Build patch-id cache of default branch (for squash detection). Built
+     * lazily on first need; safe to leave NULL if default branch is unknown. */
+    git_oid *default_patchids = NULL;
+    size_t   default_patchids_count = 0;
+    int      default_patchids_built = 0;
+
     git_branch_iterator *it = NULL;
     if (git_branch_iterator_new(&it, repo, GIT_BRANCH_LOCAL) != 0) {
         if (default_ref) git_reference_free(default_ref);
@@ -473,14 +606,34 @@ static void fill_stale_branches(Repo *r, git_repository *repo) {
             git_buf_dispose(&upstream_name);
         }
 
-        /* MERGED: branch tip is an ancestor of the default branch tip. */
+        /* MERGED / SQUASHED: both need the default OID. */
         if (have_default_oid) {
             git_object *bobj = NULL;
             if (git_reference_peel(&bobj, ref, GIT_OBJECT_COMMIT) == 0) {
                 const git_oid *boid = git_object_id(bobj);
+
+                int classified = 0;
                 if (git_oid_cmp(boid, &default_oid) != 0) {
-                    if (git_graph_descendant_of(repo, &default_oid, boid) == 1)
+                    if (git_graph_descendant_of(repo, &default_oid, boid) == 1) {
                         append_stale(r, &cap, name, STR_MERGED);
+                        classified = 1;
+                    }
+                }
+
+                /* SQUASHED: cumulative branch diff vs merge-base matches some
+                 * default-branch commit's patch-id. Build the cache lazily. */
+                if (!classified) {
+                    if (!default_patchids_built) {
+                        build_default_patchids(repo, &default_oid,
+                                               &default_patchids, &default_patchids_count);
+                        default_patchids_built = 1;
+                    }
+                    if (default_patchids_count > 0) {
+                        git_oid bpid;
+                        if (branch_cumulative_patchid(repo, boid, &default_oid, &bpid) == 0
+                            && patchid_in_set(&bpid, default_patchids, default_patchids_count))
+                            append_stale(r, &cap, name, STR_SQUASHED);
+                    }
                 }
                 git_object_free(bobj);
             }
@@ -489,6 +642,7 @@ static void fill_stale_branches(Repo *r, git_repository *repo) {
         git_reference_free(ref);
     }
 
+    free(default_patchids);
     git_branch_iterator_free(it);
     if (default_ref) git_reference_free(default_ref);
 }

@@ -66,6 +66,7 @@ typedef enum {
 typedef enum {
     STR_GONE = 1,   /* upstream tracking branch no longer exists on remote */
     STR_MERGED,     /* fully merged into the repo's default branch */
+    STR_SQUASHED,   /* branch's cumulative diff matches a default-branch commit */
 } StaleReason;
 
 typedef enum {

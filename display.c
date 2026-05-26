@@ -411,7 +411,7 @@ void print_pull_summary(const ColWidths *w) {
 void print_stale_summary(void) {
     size_t total_stale = 0;
     size_t repos_with_stale = 0;
-    size_t gone_total = 0, merged_total = 0;
+    size_t gone_total = 0, merged_total = 0, squashed_total = 0;
 
     for (size_t i = 0; i < g_repo_count; i++) {
         const Repo *r = &g_repos[i];
@@ -433,11 +433,13 @@ void print_stale_summary(void) {
             const char *tag, *color;
             switch (sb->reason) {
                 case STR_GONE:
-                    tag = "gone";   color = COL_RED;     gone_total++;   break;
+                    tag = "gone";    color = COL_RED;     gone_total++;     break;
                 case STR_MERGED:
-                    tag = "merged"; color = COL_YELLOW;  merged_total++; break;
+                    tag = "merged";  color = COL_YELLOW;  merged_total++;   break;
+                case STR_SQUASHED:
+                    tag = "squash";  color = COL_MAGENTA; squashed_total++; break;
                 default:
-                    tag = "?";      color = COL_DIM;                     break;
+                    tag = "?";       color = COL_DIM;                       break;
             }
             printf("    %s%-7s%s  %s%s%s\n",
                 C(color), tag, C(COL_RESET),
@@ -458,6 +460,8 @@ void print_stale_summary(void) {
         printf(" · %s%zu gone%s", C(COL_RED), gone_total, C(COL_RESET));
     if (merged_total)
         printf(" · %s%zu merged%s", C(COL_YELLOW), merged_total, C(COL_RESET));
+    if (squashed_total)
+        printf(" · %s%zu squashed%s", C(COL_MAGENTA), squashed_total, C(COL_RESET));
     printf("\n");
 }
 

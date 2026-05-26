@@ -501,6 +501,64 @@ else
     failed=$((failed + 1))
 fi
 
+# ── stale: squash-merged branch detected ──────────────────────────────────────
+printf "\nstale: squash-merged\n"
+D="$WORK/stale-squash"; mkmain "$D"
+git -C "$D" checkout -q -b feat-squash
+printf 'a\n' > "$D/a.txt"
+git -C "$D" add a.txt
+git -C "$D" commit -q -m "A"
+printf 'b\n' > "$D/b.txt"
+git -C "$D" add b.txt
+git -C "$D" commit -q -m "B"
+git -C "$D" checkout -q main
+git -C "$D" merge --squash feat-squash -q
+git -C "$D" commit -q -m "squashed"
+out=$("$GITLS" --no-color stale "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "squash.*feat-squash"; then
+    printf "  ok  squash-merged listed\n"; passed=$((passed + 1))
+else
+    printf "FAIL  squash-merged listed\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── stale: squash + extra commits NOT flagged (negative) ──────────────────────
+printf "\nstale: squash + extra commits\n"
+D="$WORK/stale-squash-extra"; mkmain "$D"
+git -C "$D" checkout -q -b feat-extra
+printf 'a\n' > "$D/a.txt"
+git -C "$D" add a.txt
+git -C "$D" commit -q -m "A"
+git -C "$D" checkout -q main
+git -C "$D" merge --squash feat-extra -q
+git -C "$D" commit -q -m "squashed"
+git -C "$D" checkout -q feat-extra
+printf 'x\n' > "$D/extra.txt"
+git -C "$D" add extra.txt
+git -C "$D" commit -q -m "post-squash work"
+git -C "$D" checkout -q main
+check "branch with post-squash work not flagged" "No stale branches found" \
+    "$GITLS" --no-color stale "$D"
+
+# ── stale --prune --yes: deletes squash-merged ────────────────────────────────
+printf "\nstale --prune: squash-merged\n"
+D="$WORK/prune-squash"; mkmain "$D"
+git -C "$D" checkout -q -b f-sq
+printf 'a\n' > "$D/a.txt"
+git -C "$D" add a.txt
+git -C "$D" commit -q -m "A"
+git -C "$D" checkout -q main
+git -C "$D" merge --squash f-sq -q
+git -C "$D" commit -q -m "squashed"
+out=$("$GITLS" --no-color stale --prune --yes "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "deleted.*f-sq" &&
+   ! git -C "$D" rev-parse --verify -q f-sq >/dev/null; then
+    printf "  ok  squash-merged deleted\n"; passed=$((passed + 1))
+else
+    printf "FAIL  squash-merged deleted\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
 # ── stale --prune --yes: refuses gone+unmerged ────────────────────────────────
 printf "\nstale --prune: refused unmerged\n"
 BARE_U="$WORK/prune-unmerged-bare.git"
