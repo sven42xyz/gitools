@@ -419,13 +419,17 @@ static void *spinner_run(void *arg) {
     const char *msg = (const char *)arg;
     int i = 0;
     while (atomic_load(&spinner_active)) {
-        printf("\r  %s %s", SPINNER_FRAMES[i % SPINNER_N], msg);
-        fflush(stdout);
+        char buf[512];
+        int n = snprintf(buf, sizeof(buf), "\r  %s %s", SPINNER_FRAMES[i % SPINNER_N], msg);
+        if (n > 0) {
+            size_t len = ((size_t)n >= sizeof(buf)) ? sizeof(buf) - 1 : (size_t)n;
+            write(STDOUT_FILENO, buf, len);
+        }
         i++;
         usleep(80000);
     }
-    printf("\r\033[K");
-    fflush(stdout);
+    /* clear the spinner line — write() is async-signal-safe, no libc locks */
+    write(STDOUT_FILENO, "\r\033[K", 4);
     return NULL;
 }
 
