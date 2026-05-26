@@ -22,6 +22,7 @@ bool   opt_pull                  = false;
 bool   opt_stale                 = false;
 bool   opt_prune                 = false;
 bool   opt_yes                   = false;
+long   opt_older_than_secs       = 0;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip            = NULL;
 size_t opt_extra_skip_count      = 0;

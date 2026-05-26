@@ -114,6 +114,7 @@ extern bool   opt_pull;
 extern bool   opt_stale;
 extern bool   opt_prune;
 extern bool   opt_yes;
+extern long   opt_older_than_secs;   /* 0 = disabled */
 extern char   opt_default_dir[PATH_MAX];
 extern char **opt_extra_skip;
 extern size_t opt_extra_skip_count;

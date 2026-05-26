@@ -584,6 +584,43 @@ else
     failed=$((failed + 1))
 fi
 
+# ── stale --older-than: recent stale not flagged ──────────────────────────────
+printf "\nstale --older-than: recent\n"
+D="$WORK/stale-recent"; mkmain "$D"
+git -C "$D" checkout -q -b recent-merged
+git -C "$D" commit -q --allow-empty -m "fresh"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff recent-merged -m "merge"
+# Recent commit (now) should be filtered out with --older-than 1d
+check "recent merged filtered" "No stale branches found" \
+    "$GITLS" --no-color stale --older-than 1d "$D"
+
+# ── stale --older-than: old stale still flagged ───────────────────────────────
+printf "\nstale --older-than: old\n"
+D="$WORK/stale-old"; mkmain "$D"
+git -C "$D" checkout -q -b old-merged
+# Backdate the tip commit by 10 days so --older-than 1d retains it.
+OLD_DATE="$(date -u -v-10d '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '10 days ago' '+%Y-%m-%dT%H:%M:%S')"
+GIT_AUTHOR_DATE="$OLD_DATE" GIT_COMMITTER_DATE="$OLD_DATE" \
+    git -C "$D" commit -q --allow-empty -m "old work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff old-merged -m "merge"
+out=$("$GITLS" --no-color stale --older-than 1d "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "merged.*old-merged"; then
+    printf "  ok  old merged retained\n"; passed=$((passed + 1))
+else
+    printf "FAIL  old merged retained\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── stale --older-than: invalid duration rejected ─────────────────────────────
+printf "\nstale --older-than: invalid duration\n"
+check_exit "invalid duration" 1 "$GITLS" stale --older-than xyz "$WORK/stale-recent"
+
+# ── --older-than without stale ────────────────────────────────────────────────
+printf "\n--older-than without stale\n"
+check_exit "rejected" 1 "$GITLS" --older-than 1d "$WORK/stale-recent"
+
 # ── stale --prune --yes: refuses gone+unmerged ────────────────────────────────
 printf "\nstale --prune: refused unmerged\n"
 BARE_U="$WORK/prune-unmerged-bare.git"

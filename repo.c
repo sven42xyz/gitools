@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <time.h>
 
 extern char **environ;
 #include "gitools.h"
@@ -596,6 +597,23 @@ static void fill_stale_branches(Repo *r, git_repository *repo) {
                 is_protected = 1;
         }
         if (is_protected) { git_reference_free(ref); continue; }
+
+        /* --older-than filter: skip branches whose tip commit is too recent.
+         * Applied before classification to avoid wasted patch-id work. */
+        if (opt_older_than_secs > 0) {
+            git_object *bobj = NULL;
+            if (git_reference_peel(&bobj, ref, GIT_OBJECT_COMMIT) != 0) {
+                git_reference_free(ref);
+                continue;
+            }
+            git_time_t t = git_commit_time((git_commit *)bobj);
+            git_object_free(bobj);
+            time_t now = time(NULL);
+            if ((long)((time_t)now - (time_t)t) < opt_older_than_secs) {
+                git_reference_free(ref);
+                continue;
+            }
+        }
 
         /* GONE: upstream is configured but the remote-tracking ref doesn't exist. */
         git_buf upstream_name = GIT_BUF_INIT;

@@ -24,6 +24,26 @@ bool   opt_pull               = false;
 bool   opt_stale              = false;
 bool   opt_prune              = false;
 bool   opt_yes                = false;
+long   opt_older_than_secs    = 0;
+
+/* Parse "Nd", "Nw", "Nm", "Ny" (also "Nh"/"Ns" for tests) into seconds.
+ * Returns -1 on invalid input. Month=30d, year=365d (approximations). */
+static long parse_duration(const char *s) {
+    if (!s || !*s) return -1;
+    char *end;
+    errno = 0;
+    long n = strtol(s, &end, 10);
+    if (errno || n < 0 || end == s || *end == '\0' || *(end + 1) != '\0') return -1;
+    switch (*end) {
+        case 's': return n;
+        case 'h': return n * 3600L;
+        case 'd': return n * 86400L;
+        case 'w': return n * 7L * 86400L;
+        case 'm': return n * 30L * 86400L;
+        case 'y': return n * 365L * 86400L;
+        default:  return -1;
+    }
+}
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
@@ -55,8 +75,10 @@ static void usage(const char *prog) {
         "               are fully merged into the default branch\n"
         "\n"
         "Stale options:\n"
-        "  --prune      Delete the listed stale branches (with confirmation)\n"
-        "  --yes        Skip the confirmation prompt (use with --prune)\n"
+        "  --prune              Delete the listed stale branches (with confirmation)\n"
+        "  --yes                Skip the confirmation prompt (use with --prune)\n"
+        "  --older-than <DUR>   Only flag branches whose tip is older than DUR\n"
+        "                       (e.g. 30d, 2w, 6m, 1y; also h/s for short ages)\n"
         "\n"
         "Options:\n"
         "  -s <branch>  Switch all clean repos to <branch> if it exists\n"
@@ -93,7 +115,9 @@ int main(int argc, char **argv) {
     int subcommand_idx = -1;
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
-            if ((strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc)
+            if ((strcmp(argv[i], "-s") == 0 ||
+                 strcmp(argv[i], "-d") == 0 ||
+                 strcmp(argv[i], "--older-than") == 0) && i + 1 < argc)
                 i++; /* skip the option's value token */
             continue;
         }
@@ -124,6 +148,18 @@ int main(int argc, char **argv) {
             opt_prune = true;
         } else if (strcmp(argv[i], "--yes") == 0 || strcmp(argv[i], "-y") == 0) {
             opt_yes = true;
+        } else if (strcmp(argv[i], "--older-than") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --older-than requires a duration (e.g. 30d)\n");
+                return 1;
+            }
+            long secs = parse_duration(argv[++i]);
+            if (secs < 0) {
+                fprintf(stderr, "Error: invalid duration '%s' (use e.g. 30d, 2w, 6m, 1y)\n",
+                        argv[i]);
+                return 1;
+            }
+            opt_older_than_secs = secs;
         } else if (strcmp(argv[i], "-d") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -d requires a number\n"); return 1; }
             char *end;
@@ -158,8 +194,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: 'stale' cannot be combined with fetch/pull/-s\n");
         return 1;
     }
-    if ((opt_prune || opt_yes) && !opt_stale) {
-        fprintf(stderr, "Error: --prune/--yes require the 'stale' subcommand\n");
+    if ((opt_prune || opt_yes || opt_older_than_secs > 0) && !opt_stale) {
+        fprintf(stderr, "Error: --prune/--yes/--older-than require the 'stale' subcommand\n");
         return 1;
     }
 
