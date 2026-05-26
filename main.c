@@ -175,18 +175,18 @@ int main(int argc, char **argv) {
     if (opt_fetch || opt_pull)
         resolve_git_path();
 
-    /* 7. spinner */
-    const char *verb = opt_fetch    ? "Fetching:"
-                     : opt_pull     ? "Pulling:"
-                     : opt_switch   ? "Switching:"
-                     :                "Scanning:";
+    /* 7. spinner — Phase 1 always shows "Scanning:" (local queries only).
+     *    fetch/pull get a second spinner in process_all_repos() once repos
+     *    are found.  Switch-only uses "Switching:" since that happens in Phase 1. */
+    const char *verb = (opt_switch && !opt_fetch && !opt_pull) ? "Switching:"
+                                                               : "Scanning:";
 
     char spin_label[PATH_MAX + 16];
     snprintf(spin_label, sizeof(spin_label), "%s%s%s %s",
              C(COL_BOLD), verb, C(COL_RESET), abs_dir);
     spinner_start(spin_label);
     find_repos(abs_dir, 0);
-    process_all_repos();
+    process_all_repos(abs_dir);
     spinner_stop();
 
     ColWidths w = compute_col_widths();

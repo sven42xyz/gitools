@@ -508,7 +508,7 @@ static void run_thread_pool(int nthreads, void *(*fn)(void *)) {
 }
 
 /* ── process_all_repos ─────────────────────────────────────────────────────── */
-void process_all_repos(void) {
+void process_all_repos(const char *dir) {
     if (g_path_count == 0) return;
 
     /* pre-allocate the repo array (one slot per path, preserving scan order) */
@@ -531,12 +531,25 @@ void process_all_repos(void) {
     run_thread_pool(nthreads, worker_thread);
 
     /* ── Phase 2: parallel subprocess fetch/pull ──
-     * All Phase 1 threads have joined. g_git_path is resolved and LC_ALL=C is
-     * set in the parent before any threads start. The child in run_git_capture
-     * only calls dup2+execve (both async-signal-safe syscalls) — no libc locks
-     * are acquired, so fork() is safe to call concurrently with the spinner. */
+     * Stop the Phase 1 spinner before starting Phase 2 so we can print an
+     * inter-phase status line and start a fresh spinner with the network verb.
+     * spinner_stop() is idempotent; the matching call in main() becomes a no-op.
+     * The Phase 2 spinner uses write() (async-signal-safe) so it can run safely
+     * alongside the fork() calls in net_worker_thread. */
     if (opt_fetch || opt_pull) {
+        spinner_stop();
+        printf("  Found %zu repo%s\n", g_path_count,
+               g_path_count == 1 ? "" : "s");
+        fflush(stdout);
+
+        const char *verb = opt_fetch ? "Fetching:" : "Pulling:";
+        char phase2[PATH_MAX + 64];
+        snprintf(phase2, sizeof(phase2), "%s%s%s %s",
+                 C(COL_BOLD), verb, C(COL_RESET), dir);
+        spinner_start(phase2);
+
         atomic_store(&net_idx, 0);
         run_thread_pool(nthreads, net_worker_thread);
+        spinner_stop();
     }
 }
