@@ -461,6 +461,50 @@ void print_stale_summary(void) {
     printf("\n");
 }
 
+/* ── Prune results ─────────────────────────────────────────────────────────── */
+void print_prune_results(size_t deleted, size_t refused, size_t errors) {
+    printf("%sPrune results:%s\n\n", C(COL_BOLD), C(COL_RESET));
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        if (r->stale_count == 0) continue;
+
+        const char *name = strrchr(r->path, '/');
+        name = name ? name + 1 : r->path;
+        printf("  %s%s%s\n", C(COL_CYAN), name, C(COL_RESET));
+
+        for (size_t j = 0; j < r->stale_count; j++) {
+            const StaleBranch *sb = &r->stale[j];
+            const char *tag, *color;
+            switch (sb->action) {
+                case SA_DELETED:
+                    tag = "deleted";  color = COL_GREEN;                       break;
+                case SA_REFUSED_UNMERGED:
+                    tag = "refused";  color = COL_YELLOW;                      break;
+                case SA_ERROR:
+                    tag = "error";    color = COL_RED;                         break;
+                default:
+                    tag = "skipped";  color = COL_DIM;                         break;
+            }
+            printf("    %s%-8s%s %s%s%s",
+                C(color), tag, C(COL_RESET),
+                C(COL_YELLOW), sb->name, C(COL_RESET));
+            if (sb->action == SA_REFUSED_UNMERGED)
+                printf("  %s(unmerged local commits)%s", C(COL_DIM), C(COL_RESET));
+            printf("\n");
+        }
+        printf("\n");
+    }
+
+    printf("  %s%zu deleted%s",
+        C(COL_GREEN), deleted, C(COL_RESET));
+    if (refused)
+        printf(" · %s%zu refused%s", C(COL_YELLOW), refused, C(COL_RESET));
+    if (errors)
+        printf(" · %s%zu errors%s", C(COL_RED), errors, C(COL_RESET));
+    printf("\n");
+}
+
 /* ── Spinner ────────────────────────────────────────────────────────────────── */
 static const char   *SPINNER_FRAMES[] = {
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"

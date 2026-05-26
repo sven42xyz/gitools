@@ -22,6 +22,8 @@ char   opt_switch_branch[256] = "";
 bool   opt_fetch              = false;
 bool   opt_pull               = false;
 bool   opt_stale              = false;
+bool   opt_prune              = false;
+bool   opt_yes                = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
@@ -49,6 +51,10 @@ static void usage(const char *prog) {
         "  pull         Fast-forward pull all clean repos\n"
         "  stale        List local branches whose upstream is gone or that\n"
         "               are fully merged into the default branch\n"
+        "\n"
+        "Stale options:\n"
+        "  --prune      Delete the listed stale branches (with confirmation)\n"
+        "  --yes        Skip the confirmation prompt (use with --prune)\n"
         "\n"
         "Options:\n"
         "  -s <branch>  Switch all clean repos to <branch> if it exists\n"
@@ -111,6 +117,10 @@ int main(int argc, char **argv) {
             opt_all = true;
         } else if (strcmp(argv[i], "--no-color") == 0) {
             opt_no_color = true;
+        } else if (strcmp(argv[i], "--prune") == 0) {
+            opt_prune = true;
+        } else if (strcmp(argv[i], "--yes") == 0 || strcmp(argv[i], "-y") == 0) {
+            opt_yes = true;
         } else if (strcmp(argv[i], "-d") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -d requires a number\n"); return 1; }
             char *end;
@@ -143,6 +153,10 @@ int main(int argc, char **argv) {
     }
     if (opt_stale && (opt_fetch || opt_pull || opt_switch)) {
         fprintf(stderr, "Error: 'stale' cannot be combined with fetch/pull/-s\n");
+        return 1;
+    }
+    if ((opt_prune || opt_yes) && !opt_stale) {
+        fprintf(stderr, "Error: --prune/--yes require the 'stale' subcommand\n");
         return 1;
     }
 
@@ -202,6 +216,32 @@ int main(int argc, char **argv) {
     if (opt_stale) {
         printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
         print_stale_summary();
+
+        if (opt_prune) {
+            size_t total_stale = 0;
+            for (size_t i = 0; i < g_repo_count; i++)
+                total_stale += g_repos[i].stale_count;
+
+            if (total_stale > 0) {
+                int proceed = opt_yes;
+                if (!proceed) {
+                    printf("\n%sDelete %zu stale branch%s?%s [y/N] ",
+                        C(COL_BOLD), total_stale,
+                        total_stale == 1 ? "" : "es", C(COL_RESET));
+                    fflush(stdout);
+                    char ans[8] = {0};
+                    if (fgets(ans, sizeof(ans), stdin) &&
+                        (ans[0] == 'y' || ans[0] == 'Y'))
+                        proceed = 1;
+                }
+                if (proceed) {
+                    printf("\n");
+                    prune_stale_branches();
+                } else {
+                    printf("Aborted.\n");
+                }
+            }
+        }
         goto cleanup;
     }
 

@@ -493,6 +493,101 @@ static void fill_stale_branches(Repo *r, git_repository *repo) {
     if (default_ref) git_reference_free(default_ref);
 }
 
+/* ── Prune stale branches ──────────────────────────────────────────────────── */
+/*
+ * Delete branches collected by fill_stale_branches(). Runs sequentially after
+ * detection and after the user confirmation in main.c.
+ *
+ * Safety:
+ *   STR_MERGED — always safe (already verified merged into default).
+ *   STR_GONE   — re-verify reachability from default; refuse if there are
+ *                local commits not in default (avoids data loss).
+ *
+ * Per-branch result is stored in sb->action and rendered by display.c.
+ */
+void prune_stale_branches(void) {
+    size_t deleted = 0, refused = 0, errors = 0;
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        Repo *r = &g_repos[i];
+        if (r->stale_count == 0) continue;
+
+        git_repository *repo = NULL;
+        if (git_repository_open(&repo, r->path) != 0) {
+            for (size_t j = 0; j < r->stale_count; j++) {
+                r->stale[j].action = SA_ERROR;
+                errors++;
+            }
+            continue;
+        }
+
+        /* Re-resolve default branch OID for the merged-into check on GONE. */
+        git_oid default_oid;
+        int have_default_oid = 0;
+        if (r->default_branch[0]) {
+            git_reference *dref = NULL;
+            if (git_branch_lookup(&dref, repo, r->default_branch, GIT_BRANCH_LOCAL) == 0) {
+                git_object *obj = NULL;
+                if (git_reference_peel(&obj, dref, GIT_OBJECT_COMMIT) == 0) {
+                    git_oid_cpy(&default_oid, git_object_id(obj));
+                    have_default_oid = 1;
+                    git_object_free(obj);
+                }
+                git_reference_free(dref);
+            }
+        }
+
+        for (size_t j = 0; j < r->stale_count; j++) {
+            StaleBranch *sb = &r->stale[j];
+            git_reference *bref = NULL;
+            if (git_branch_lookup(&bref, repo, sb->name, GIT_BRANCH_LOCAL) != 0) {
+                sb->action = SA_ERROR;
+                errors++;
+                continue;
+            }
+
+            /* For GONE, verify the branch is fully reachable from default
+             * before deleting — otherwise local-only commits would be lost. */
+            if (sb->reason == STR_GONE) {
+                if (!have_default_oid) {
+                    sb->action = SA_REFUSED_UNMERGED;
+                    refused++;
+                    git_reference_free(bref);
+                    continue;
+                }
+                git_object *bobj = NULL;
+                int merged_in = 0;
+                if (git_reference_peel(&bobj, bref, GIT_OBJECT_COMMIT) == 0) {
+                    const git_oid *boid = git_object_id(bobj);
+                    if (git_oid_cmp(boid, &default_oid) == 0 ||
+                        git_graph_descendant_of(repo, &default_oid, boid) == 1)
+                        merged_in = 1;
+                    git_object_free(bobj);
+                }
+                if (!merged_in) {
+                    sb->action = SA_REFUSED_UNMERGED;
+                    refused++;
+                    git_reference_free(bref);
+                    continue;
+                }
+            }
+
+            if (git_branch_delete(bref) == 0) {
+                sb->action = SA_DELETED;
+                deleted++;
+            } else {
+                sb->action = SA_ERROR;
+                errors++;
+            }
+            git_reference_free(bref);
+        }
+
+        git_repository_free(repo);
+    }
+
+    print_prune_results(deleted, refused, errors);
+}
+
 /* ── Phase 1: local libgit2 queries (no subprocess) ────────────────────────── */
 /*
  * Called from worker threads — must NOT call fork/exec.

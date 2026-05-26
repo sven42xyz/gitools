@@ -68,9 +68,17 @@ typedef enum {
     STR_MERGED,     /* fully merged into the repo's default branch */
 } StaleReason;
 
+typedef enum {
+    SA_NA = 0,
+    SA_DELETED,
+    SA_REFUSED_UNMERGED,   /* GONE branch with local commits not in default */
+    SA_ERROR,              /* libgit2 delete call failed */
+} StaleAction;
+
 typedef struct {
     char        name[256];
     StaleReason reason;
+    StaleAction action;
 } StaleBranch;
 
 /* ── Repo ──────────────────────────────────────────────────────────────────── */
@@ -103,6 +111,8 @@ extern char   opt_switch_branch[256];
 extern bool   opt_fetch;
 extern bool   opt_pull;
 extern bool   opt_stale;
+extern bool   opt_prune;
+extern bool   opt_yes;
 extern char   opt_default_dir[PATH_MAX];
 extern char **opt_extra_skip;
 extern size_t opt_extra_skip_count;
@@ -122,6 +132,7 @@ void load_config(void);
 void resolve_git_path(void);
 void collect_path(const char *path);
 void process_all_repos(const char *dir);
+void prune_stale_branches(void);
 
 /* display.c */
 const char *C(const char *color);
@@ -136,6 +147,7 @@ void        print_switch_summary(const ColWidths *w);
 void        print_fetch_summary(const ColWidths *w);
 void        print_pull_summary(const ColWidths *w);
 void        print_stale_summary(void);
+void        print_prune_results(size_t deleted, size_t refused, size_t errors);
 void        spinner_start(const char *msg);
 void        spinner_stop(void);
 
