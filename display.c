@@ -421,7 +421,10 @@ static void *spinner_run(void *arg) {
     while (atomic_load(&spinner_active)) {
         char buf[512];
         int n = snprintf(buf, sizeof(buf), "\r  %s %s", SPINNER_FRAMES[i % SPINNER_N], msg);
-        if (n > 0) write(STDOUT_FILENO, buf, (size_t)n);
+        if (n > 0) {
+            size_t len = ((size_t)n >= sizeof(buf)) ? sizeof(buf) - 1 : (size_t)n;
+            write(STDOUT_FILENO, buf, len);
+        }
         i++;
         usleep(80000);
     }
