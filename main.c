@@ -72,7 +72,7 @@ static void usage(const char *prog) {
         "  fetch        Fetch all repos from their remote\n"
         "  pull         Fast-forward pull all clean repos\n"
         "  stale        List local branches whose upstream is gone or that\n"
-        "               are fully merged into the default branch\n"
+        "               are merged / squash-merged into the default branch\n"
         "\n"
         "Stale options:\n"
         "  --prune              Delete the listed stale branches (with confirmation)\n"
