@@ -21,6 +21,7 @@ Scanned: /Users/sven/projects
 - **Fetch** all repos from their remote (`fetch`)
 - **Pull** (fast-forward only) all clean repos (`pull`)
 - **Branch switching** across all clean repos (`-s`)
+- **Stale branch detection** — gone upstreams, regular and squash-merged branches (`stale`), with optional `--prune` and age filter
 - Recursive directory scan with configurable depth
 - Branch name (incl. detached HEAD as short SHA)
 - Staged / modified / untracked file counts
@@ -66,20 +67,28 @@ sudo make install        # installs to /usr/local/bin
 ## Usage
 
 ```
-gitls [fetch|pull] [OPTIONS] [DIRECTORY]
+gitls [fetch|pull|stale] [OPTIONS] [DIRECTORY]
 
 Subcommands:
   fetch        Fetch all repos from their remote
   pull         Fast-forward pull all clean repos
+  stale        List local branches whose upstream is gone or that
+               are merged/squash-merged into the default branch
 
 Options:
-  -s <branch>  Switch all clean repos to <branch> if it exists
-  -d <n>       Max search depth (default: 5)
-  -a           Include hidden directories
-  -v           Verbose: show all repos in summaries, not just changed ones
-  --no-color   Disable ANSI colours
-  --version    Show version
-  -h, --help   Show this help
+  -s <branch>          Switch all clean repos to <branch> if it exists
+  -d <n>               Max search depth (default: 5)
+  -a                   Include hidden directories
+  -v                   Verbose: show all repos in summaries, not just changed ones
+  --no-color           Disable ANSI colours
+  --version            Show version
+  -h, --help           Show this help
+
+Stale options:
+  --prune              Delete the listed stale branches (with confirmation)
+  --yes, -y            Skip the confirmation prompt (use with --prune)
+  --older-than <DUR>   Only flag branches whose tip is older than DUR
+                       (e.g. 30d, 2w, 6m, 1y)
 ```
 
 ### Examples
@@ -102,6 +111,12 @@ gitls -s main ~/projects
 
 # Fetch and switch to a branch (creates local tracking branch if needed)
 gitls fetch -s feature-branch ~/projects
+
+# List stale local branches across all repos
+gitls stale ~/projects
+
+# Delete stale branches that haven't been touched in 30 days
+gitls stale --prune --older-than 30d ~/projects
 
 # No colours (useful for scripts)
 gitls --no-color ~/projects
@@ -201,6 +216,63 @@ Switched to branch: feature-x
 | `· branch not found` | Branch doesn't exist locally or on `origin` |
 | `✗ skipped` | Repo has staged or modified files |
 
+## Stale branches
+
+`gitls stale` lists local branches that are likely safe to clean up. Three categories are detected:
+
+| Tag | Meaning |
+|-----|---------|
+| `gone` | The branch has a configured upstream, but the remote-tracking ref no longer exists (e.g. the remote branch was deleted on the server). |
+| `merged` | The branch tip is reachable from the default branch — i.e. it was merged via a regular merge or fast-forward. |
+| `squash` | The branch's cumulative diff matches a single commit on the default branch — typical for "Squash & merge" workflows. |
+
+```
+gitls stale ~/projects
+
+Scanned: /Users/sven/projects
+
+  api-server  (default: main)
+    merged   feature/login
+    squash   feature/payment-flow
+    gone     bugfix/old-fix
+
+  3 stale branches in 1 repo · 1 gone · 1 merged · 1 squashed
+```
+
+### Pruning
+
+Add `--prune` to actually delete the listed branches. By default you get a confirmation prompt; pass `--yes` (or `-y`) to skip it.
+
+```sh
+gitls stale --prune ~/projects
+gitls stale --prune --yes ~/projects
+```
+
+**Safety rules:**
+
+- The current `HEAD` branch is never flagged or deleted.
+- The repo's default branch (`main`/`master`) and any names listed under `protected_branches` are excluded — `main` and `master` are always implicitly protected even when they are not the resolved default.
+- `gone` branches are re-verified against the default branch before deletion. If they carry local commits that are not reachable from default, they are **refused** with a clear marker rather than deleted, so local-only work is never lost silently.
+- `merged` and `squash` branches are safe to delete by construction (their work is already on the default branch).
+
+### Age filter
+
+`--older-than <DUR>` restricts the listing to branches whose tip commit is older than the given duration. Useful for "list branches that have been dormant for at least a month" workflows.
+
+| Suffix | Unit |
+|--------|------|
+| `s` | seconds |
+| `h` | hours |
+| `d` | days |
+| `w` | weeks |
+| `m` | months (≈ 30 days) |
+| `y` | years (≈ 365 days) |
+
+```sh
+gitls stale --older-than 30d
+gitls stale --prune --yes --older-than 6m ~/projects
+```
+
 ## Config file
 
 Copy the bundled example to get started:
@@ -216,6 +288,7 @@ Or create `~/.gitlsrc` manually:
 default_dir=~/projects
 max_depth=3
 skip_dirs=build,dist,tmp,*.egg-info
+protected_branches=develop,staging
 no_color=false
 ```
 
@@ -224,6 +297,7 @@ no_color=false
 | `default_dir` | Directory to scan when none is given on CLI | `.` (current dir) |
 | `max_depth` | Maximum directory recursion depth | `5` |
 | `skip_dirs` | Comma-separated list of directory names to skip (glob patterns supported) | — |
+| `protected_branches` | Comma-separated branch names that `stale` must never flag or delete (in addition to `main`/`master`, which are always protected) | — |
 | `no_color` | Set to `true` or `1` to disable colors | `false` |
 
 CLI flags always override the config file. Passing an explicit directory (including `.`) always overrides `default_dir`:

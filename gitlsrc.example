@@ -14,5 +14,9 @@
 # Glob patterns are supported: *, ?, [abc]
 # skip_dirs=build,dist,tmp,node_modules,*.egg-info
 
+# Branches that the 'stale' subcommand must never flag or delete.
+# main and master are always implicitly protected.
+# protected_branches=develop,staging,release
+
 # Disable ANSI colors (true or 1)
 # no_color=false
