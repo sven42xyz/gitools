@@ -21,6 +21,7 @@ bool   opt_switch             = false;
 char   opt_switch_branch[256] = "";
 bool   opt_fetch              = false;
 bool   opt_pull               = false;
+bool   opt_stale              = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
@@ -38,7 +39,7 @@ static int git_installed(void) {
 /* ── Usage ─────────────────────────────────────────────────────────────────── */
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s [fetch|pull] [OPTIONS] [DIRECTORY]\n"
+        "Usage: %s [fetch|pull|stale] [OPTIONS] [DIRECTORY]\n"
         "\n"
         "Recursively scan DIRECTORY (default: .) for git repositories\n"
         "and display their status.\n"
@@ -46,6 +47,8 @@ static void usage(const char *prog) {
         "Subcommands:\n"
         "  fetch        Fetch all repos from their remote\n"
         "  pull         Fast-forward pull all clean repos\n"
+        "  stale        List local branches whose upstream is gone or that\n"
+        "               are fully merged into the default branch\n"
         "\n"
         "Options:\n"
         "  -s <branch>  Switch all clean repos to <branch> if it exists\n"
@@ -87,6 +90,7 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "fetch") == 0) { opt_fetch = true;  subcommand_idx = i; break; }
         if (strcmp(argv[i], "pull")  == 0) { opt_pull  = true;  subcommand_idx = i; break; }
+        if (strcmp(argv[i], "stale") == 0) { opt_stale = true;  subcommand_idx = i; break; }
     }
 
     /* 3. option parsing – skip the subcommand token */
@@ -137,6 +141,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: 'pull' and '-s' cannot be combined\n");
         return 1;
     }
+    if (opt_stale && (opt_fetch || opt_pull || opt_switch)) {
+        fprintf(stderr, "Error: 'stale' cannot be combined with fetch/pull/-s\n");
+        return 1;
+    }
 
     /* 5. apply config default_dir only when the user gave no directory */
     if (opt_default_dir[0] != '\0' && !user_gave_dir)
@@ -179,7 +187,8 @@ int main(int argc, char **argv) {
      *    fetch/pull get a second spinner in process_all_repos() once repos
      *    are found.  Switch-only uses "Switching:" since that happens in Phase 1. */
     const char *verb = (opt_switch && !opt_fetch && !opt_pull) ? "Switching:"
-                                                               : "Scanning:";
+                       : opt_stale                              ? "Inspecting:"
+                                                                : "Scanning:";
 
     char spin_label[PATH_MAX + 16];
     snprintf(spin_label, sizeof(spin_label), "%s%s%s %s",
@@ -188,6 +197,13 @@ int main(int argc, char **argv) {
     find_repos(abs_dir, 0);
     process_all_repos(abs_dir);
     spinner_stop();
+
+    /* ── stale subcommand: dedicated output, no status table ── */
+    if (opt_stale) {
+        printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
+        print_stale_summary();
+        goto cleanup;
+    }
 
     ColWidths w = compute_col_widths();
 
@@ -222,10 +238,13 @@ int main(int argc, char **argv) {
         printf("\n");
     }
 
+cleanup:
     /* cleanup */
     for (size_t i = 0; i < g_path_count; i++)
         free(g_paths[i]);
     free(g_paths);
+    for (size_t i = 0; i < g_repo_count; i++)
+        free(g_repos[i].stale);
     free(g_repos);
     if (opt_extra_skip) {
         for (size_t i = 0; i < opt_extra_skip_count; i++)

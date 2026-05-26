@@ -19,6 +19,7 @@ bool   opt_switch                = false;
 char   opt_switch_branch[256]    = "";
 bool   opt_fetch                 = false;
 bool   opt_pull                  = false;
+bool   opt_stale                 = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip            = NULL;
 size_t opt_extra_skip_count      = 0;

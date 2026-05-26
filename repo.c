@@ -383,6 +383,116 @@ static PullResult do_pull(git_repository *repo, Repo *r) {
     return PR_ERROR;
 }
 
+/* ── Stale branches ────────────────────────────────────────────────────────── */
+/*
+ * Detect local branches that are either:
+ *   STR_GONE   — upstream tracking branch is configured but no longer exists
+ *   STR_MERGED — fully reachable from the repo's default branch (main/master)
+ *
+ * Skips the current HEAD branch and the default branch itself. The current
+ * HEAD's *short* name is compared (e.g. "main"), matching what fill_branch
+ * stores into r->branch.
+ */
+static void append_stale(Repo *r, size_t *cap, const char *name, StaleReason reason) {
+    if (r->stale_count >= *cap) {
+        size_t ncap = *cap ? *cap * 2 : 8;
+        StaleBranch *tmp = realloc(r->stale, ncap * sizeof(*tmp));
+        if (!tmp) return;   /* out of memory: silently drop further entries */
+        r->stale = tmp;
+        *cap = ncap;
+    }
+    StaleBranch *sb = &r->stale[r->stale_count++];
+    strncpy(sb->name, name, sizeof(sb->name) - 1);
+    sb->name[sizeof(sb->name) - 1] = '\0';
+    sb->reason = reason;
+}
+
+static void fill_stale_branches(Repo *r, git_repository *repo) {
+    /* Resolve default branch: prefer "main", fall back to "master".
+     * If neither exists we can still detect GONE branches but not MERGED. */
+    git_reference *default_ref = NULL;
+    if (git_branch_lookup(&default_ref, repo, "main", GIT_BRANCH_LOCAL) == 0) {
+        strncpy(r->default_branch, "main", sizeof(r->default_branch) - 1);
+    } else if (git_branch_lookup(&default_ref, repo, "master", GIT_BRANCH_LOCAL) == 0) {
+        strncpy(r->default_branch, "master", sizeof(r->default_branch) - 1);
+    } else {
+        default_ref = NULL;
+        r->default_branch[0] = '\0';
+    }
+
+    git_oid default_oid;
+    int have_default_oid = 0;
+    if (default_ref) {
+        git_object *obj = NULL;
+        if (git_reference_peel(&obj, default_ref, GIT_OBJECT_COMMIT) == 0) {
+            git_oid_cpy(&default_oid, git_object_id(obj));
+            have_default_oid = 1;
+            git_object_free(obj);
+        }
+    }
+
+    git_branch_iterator *it = NULL;
+    if (git_branch_iterator_new(&it, repo, GIT_BRANCH_LOCAL) != 0) {
+        if (default_ref) git_reference_free(default_ref);
+        return;
+    }
+
+    size_t cap = 0;
+    git_reference *ref = NULL;
+    git_branch_t   bt;
+    while (git_branch_next(&ref, &bt, it) == 0) {
+        const char *name = NULL;
+        if (git_branch_name(&name, ref) != 0 || !name) {
+            git_reference_free(ref);
+            continue;
+        }
+
+        /* Skip the current HEAD branch and the default branch itself */
+        if (r->branch[0] && strcmp(name, r->branch) == 0) { git_reference_free(ref); continue; }
+        if (r->default_branch[0] && strcmp(name, r->default_branch) == 0) {
+            git_reference_free(ref);
+            continue;
+        }
+
+        /* GONE: upstream is configured but the remote-tracking ref doesn't exist. */
+        git_buf upstream_name = GIT_BUF_INIT;
+        int has_upstream_cfg =
+            (git_branch_upstream_name(&upstream_name, repo, git_reference_name(ref)) == 0);
+        if (has_upstream_cfg) {
+            git_reference *upstream_ref = NULL;
+            int upstream_exists =
+                (git_reference_lookup(&upstream_ref, repo, upstream_name.ptr) == 0);
+            if (upstream_ref) git_reference_free(upstream_ref);
+            git_buf_dispose(&upstream_name);
+            if (!upstream_exists) {
+                append_stale(r, &cap, name, STR_GONE);
+                git_reference_free(ref);
+                continue;
+            }
+        } else {
+            git_buf_dispose(&upstream_name);
+        }
+
+        /* MERGED: branch tip is an ancestor of the default branch tip. */
+        if (have_default_oid) {
+            git_object *bobj = NULL;
+            if (git_reference_peel(&bobj, ref, GIT_OBJECT_COMMIT) == 0) {
+                const git_oid *boid = git_object_id(bobj);
+                if (git_oid_cmp(boid, &default_oid) != 0) {
+                    if (git_graph_descendant_of(repo, &default_oid, boid) == 1)
+                        append_stale(r, &cap, name, STR_MERGED);
+                }
+                git_object_free(bobj);
+            }
+        }
+
+        git_reference_free(ref);
+    }
+
+    git_branch_iterator_free(it);
+    if (default_ref) git_reference_free(default_ref);
+}
+
 /* ── Phase 1: local libgit2 queries (no subprocess) ────────────────────────── */
 /*
  * Called from worker threads — must NOT call fork/exec.
@@ -420,6 +530,9 @@ static void process_repo_local(const char *path, Repo *r) {
      * refresh them in phase 2 (stale data would just be overwritten anyway) */
     if (!opt_fetch && !opt_pull)
         fill_ahead_behind(r, repo);
+
+    if (opt_stale)
+        fill_stale_branches(r, repo);
 
     git_repository_free(repo);
 }

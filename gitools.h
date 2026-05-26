@@ -62,6 +62,17 @@ typedef enum {
     PR_ERROR,
 } PullResult;
 
+/* ── Stale branch detection ────────────────────────────────────────────────── */
+typedef enum {
+    STR_GONE = 1,   /* upstream tracking branch no longer exists on remote */
+    STR_MERGED,     /* fully merged into the repo's default branch */
+} StaleReason;
+
+typedef struct {
+    char        name[256];
+    StaleReason reason;
+} StaleBranch;
+
 /* ── Repo ──────────────────────────────────────────────────────────────────── */
 typedef struct {
     char         path[PATH_MAX];
@@ -77,6 +88,9 @@ typedef struct {
     FetchResult  fetch_result;
     PullResult   pull_result;
     char         net_error[256];   /* libgit2 error message on fetch/pull failure */
+    StaleBranch *stale;            /* allocated when opt_stale; freed in main.c cleanup */
+    size_t       stale_count;
+    char         default_branch[256]; /* main/master, used by stale detection display */
 } Repo;
 
 /* ── Global options (defined in main.c) ───────────────────────────────────── */
@@ -88,6 +102,7 @@ extern bool   opt_switch;
 extern char   opt_switch_branch[256];
 extern bool   opt_fetch;
 extern bool   opt_pull;
+extern bool   opt_stale;
 extern char   opt_default_dir[PATH_MAX];
 extern char **opt_extra_skip;
 extern size_t opt_extra_skip_count;
@@ -120,6 +135,7 @@ void        print_repo(const Repo *r, const ColWidths *w);
 void        print_switch_summary(const ColWidths *w);
 void        print_fetch_summary(const ColWidths *w);
 void        print_pull_summary(const ColWidths *w);
+void        print_stale_summary(void);
 void        spinner_start(const char *msg);
 void        spinner_stop(void);
 

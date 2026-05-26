@@ -407,6 +407,60 @@ void print_pull_summary(const ColWidths *w) {
     printf("\n\n");
 }
 
+/* ── Stale branch summary ──────────────────────────────────────────────────── */
+void print_stale_summary(void) {
+    size_t total_stale = 0;
+    size_t repos_with_stale = 0;
+    size_t gone_total = 0, merged_total = 0;
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        if (r->stale_count == 0) continue;
+        repos_with_stale++;
+
+        const char *name = strrchr(r->path, '/');
+        name = name ? name + 1 : r->path;
+
+        /* repo header: name + (default branch if known) */
+        printf("  %s%s%s", C(COL_CYAN), name, C(COL_RESET));
+        if (r->default_branch[0])
+            printf("  %s(default: %s)%s", C(COL_DIM), r->default_branch, C(COL_RESET));
+        printf("\n");
+
+        for (size_t j = 0; j < r->stale_count; j++) {
+            const StaleBranch *sb = &r->stale[j];
+            total_stale++;
+            const char *tag, *color;
+            switch (sb->reason) {
+                case STR_GONE:
+                    tag = "gone";   color = COL_RED;     gone_total++;   break;
+                case STR_MERGED:
+                    tag = "merged"; color = COL_YELLOW;  merged_total++; break;
+                default:
+                    tag = "?";      color = COL_DIM;                     break;
+            }
+            printf("    %s%-7s%s  %s%s%s\n",
+                C(color), tag, C(COL_RESET),
+                C(COL_YELLOW), sb->name, C(COL_RESET));
+        }
+        printf("\n");
+    }
+
+    if (total_stale == 0) {
+        printf("  No stale branches found.\n");
+        return;
+    }
+
+    printf("  %s%zu stale branch%s%s in %s%zu repo%s%s",
+        C(COL_BOLD), total_stale, total_stale == 1 ? "" : "es", C(COL_RESET),
+        C(COL_BOLD), repos_with_stale, repos_with_stale == 1 ? "" : "s", C(COL_RESET));
+    if (gone_total)
+        printf(" · %s%zu gone%s", C(COL_RED), gone_total, C(COL_RESET));
+    if (merged_total)
+        printf(" · %s%zu merged%s", C(COL_YELLOW), merged_total, C(COL_RESET));
+    printf("\n");
+}
+
 /* ── Spinner ────────────────────────────────────────────────────────────────── */
 static const char   *SPINNER_FRAMES[] = {
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
