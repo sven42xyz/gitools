@@ -522,6 +522,9 @@ static int patchid_in_set(const git_oid *needle, const git_oid *set, size_t coun
  * stores into r->branch.
  */
 static void append_stale(Repo *r, size_t *cap, const char *name, StaleReason reason) {
+    /* --only <reasons>: filter at append so call sites stay clean. */
+    if (opt_only_mask && !(opt_only_mask & (1u << reason))) return;
+
     if (r->stale_count >= *cap) {
         size_t ncap = *cap ? *cap * 2 : 8;
         StaleBranch *tmp = realloc(r->stale, ncap * sizeof(*tmp));

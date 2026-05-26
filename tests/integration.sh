@@ -626,6 +626,50 @@ check_exit "rejected" 1 "$GITLS" --older-than 1d "$WORK/stale-recent"
 printf "\nstale --yes without --prune\n"
 check_exit "rejected" 1 "$GITLS" stale --yes "$WORK/stale-recent"
 
+# ── stale --only: filter by reason ────────────────────────────────────────────
+printf "\nstale --only: filter by reason\n"
+BARE_O="$WORK/only-bare.git"
+git init --bare -q "$BARE_O"
+D="$WORK/stale-only"
+git clone -q "$BARE_O" "$D" 2>/dev/null
+git -C "$D" config user.email "test@gitls.test"
+git -C "$D" config user.name "Test"
+git -C "$D" commit -q --allow-empty -m "init"
+current=$(git -C "$D" symbolic-ref --short HEAD)
+[ "$current" = "main" ] || git -C "$D" branch -m main
+git -C "$D" push -q -u origin main
+git -C "$D" checkout -q -b m-only
+git -C "$D" commit -q --allow-empty -m "m"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff m-only -m "merge m-only"
+git -C "$D" checkout -q -b g-only
+git -C "$D" commit -q --allow-empty -m "g"
+git -C "$D" push -q -u origin g-only
+git -C "$D" push -q origin --delete g-only
+git -C "$D" remote prune origin >/dev/null
+git -C "$D" checkout -q main
+
+out_gone=$("$GITLS" --no-color stale --only gone "$D" 2>&1)
+if printf '%s' "$out_gone" | grep -qE "gone.*g-only" &&
+   ! printf '%s' "$out_gone" | grep -qE "merged.*m-only"; then
+    printf "  ok  --only gone keeps only gone\n"; passed=$((passed + 1))
+else
+    printf "FAIL  --only gone keeps only gone\n     got: %s\n" "$out_gone"
+    failed=$((failed + 1))
+fi
+
+out_merged=$("$GITLS" --no-color stale --only merged "$D" 2>&1)
+if printf '%s' "$out_merged" | grep -qE "merged.*m-only" &&
+   ! printf '%s' "$out_merged" | grep -qE "gone.*g-only"; then
+    printf "  ok  --only merged keeps only merged\n"; passed=$((passed + 1))
+else
+    printf "FAIL  --only merged keeps only merged\n     got: %s\n" "$out_merged"
+    failed=$((failed + 1))
+fi
+
+check_exit "--only invalid reason"  1 "$GITLS" stale --only nope "$D"
+check_exit "--only without stale"   1 "$GITLS" --only gone "$D"
+
 # ── stale: custom default branch (origin/HEAD points elsewhere) ───────────────
 printf "\nstale: custom default branch\n"
 BARE_C="$WORK/custom-bare.git"

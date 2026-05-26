@@ -25,6 +25,31 @@ bool   opt_stale              = false;
 bool   opt_prune              = false;
 bool   opt_yes                = false;
 long   opt_older_than_secs    = 0;
+unsigned int opt_only_mask    = 0;
+
+/* Parse a comma-separated reason list ("gone,merged,squash") into a bitmask.
+ * Returns 0 on success, -1 on unknown token. */
+static int parse_only_mask(const char *s, unsigned int *out) {
+    if (!s || !*s) return -1;
+    unsigned int mask = 0;
+    char *copy = strdup(s);
+    if (!copy) return -1;
+    char *tok = strtok(copy, ",");
+    while (tok) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        char *end = tok + strlen(tok);
+        while (end > tok && (end[-1] == ' ' || end[-1] == '\t')) *--end = '\0';
+        if      (strcmp(tok, "gone")     == 0) mask |= 1u << STR_GONE;
+        else if (strcmp(tok, "merged")   == 0) mask |= 1u << STR_MERGED;
+        else if (strcmp(tok, "squash")   == 0
+              || strcmp(tok, "squashed") == 0) mask |= 1u << STR_SQUASHED;
+        else { free(copy); return -1; }
+        tok = strtok(NULL, ",");
+    }
+    free(copy);
+    *out = mask;
+    return 0;
+}
 
 /* Parse "Nd", "Nw", "Nm", "Ny" (also "Nh"/"Ns" for tests) into seconds.
  * Returns -1 on invalid input. Month=30d, year=365d (approximations). */
@@ -81,6 +106,8 @@ static void usage(const char *prog) {
         "  --yes                Skip the confirmation prompt (use with --prune)\n"
         "  --older-than <DUR>   Only flag branches whose tip is older than DUR\n"
         "                       (e.g. 30d, 2w, 6m, 1y; also h/s for short ages)\n"
+        "  --only <reasons>     Comma-separated subset of gone,merged,squash\n"
+        "                       (default: all). Example: --only gone,merged\n"
         "\n"
         "Options:\n"
         "  -s <branch>  Switch all clean repos to <branch> if it exists\n"
@@ -119,7 +146,8 @@ int main(int argc, char **argv) {
         if (argv[i][0] == '-') {
             if ((strcmp(argv[i], "-s") == 0 ||
                  strcmp(argv[i], "-d") == 0 ||
-                 strcmp(argv[i], "--older-than") == 0) && i + 1 < argc)
+                 strcmp(argv[i], "--older-than") == 0 ||
+                 strcmp(argv[i], "--only") == 0) && i + 1 < argc)
                 i++; /* skip the option's value token */
             continue;
         }
@@ -162,6 +190,16 @@ int main(int argc, char **argv) {
                 return 1;
             }
             opt_older_than_secs = secs;
+        } else if (strcmp(argv[i], "--only") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --only requires a reason list (e.g. gone,merged)\n");
+                return 1;
+            }
+            if (parse_only_mask(argv[++i], &opt_only_mask) != 0) {
+                fprintf(stderr, "Error: invalid --only value '%s' "
+                        "(expected: gone, merged, squash)\n", argv[i]);
+                return 1;
+            }
         } else if (strcmp(argv[i], "-d") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -d requires a number\n"); return 1; }
             char *end;
@@ -196,8 +234,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: 'stale' cannot be combined with fetch/pull/-s\n");
         return 1;
     }
-    if ((opt_prune || opt_yes || opt_older_than_secs > 0) && !opt_stale) {
-        fprintf(stderr, "Error: --prune/--yes/--older-than require the 'stale' subcommand\n");
+    if ((opt_prune || opt_yes || opt_older_than_secs > 0 || opt_only_mask) && !opt_stale) {
+        fprintf(stderr, "Error: --prune/--yes/--older-than/--only require the 'stale' subcommand\n");
         return 1;
     }
     if (opt_yes && !opt_prune) {

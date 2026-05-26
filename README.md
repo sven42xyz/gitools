@@ -89,6 +89,8 @@ Stale options:
   --yes, -y            Skip the confirmation prompt (use with --prune)
   --older-than <DUR>   Only flag branches whose tip is older than DUR
                        (e.g. 30d, 2w, 6m, 1y)
+  --only <reasons>     Comma-separated subset of gone,merged,squash
+                       (default: all). Example: --only gone,merged
 ```
 
 ### Examples
@@ -246,6 +248,9 @@ Add `--prune` to actually delete the listed branches. By default you get a confi
 ```sh
 gitls stale --prune ~/projects
 gitls stale --prune --yes ~/projects
+
+# Prune only branches whose remote upstream is gone
+gitls stale --prune --yes --only gone ~/projects
 ```
 
 **Safety rules:**
