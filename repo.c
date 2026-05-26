@@ -536,16 +536,44 @@ static void append_stale(Repo *r, size_t *cap, const char *name, StaleReason rea
 }
 
 static void fill_stale_branches(Repo *r, git_repository *repo) {
-    /* Resolve default branch: prefer "main", fall back to "master".
-     * If neither exists we can still detect GONE branches but not MERGED. */
+    /* Resolve default branch:
+     *   1. refs/remotes/origin/HEAD — the remote's published default. This is
+     *      what "default branch" actually means for repos that use names other
+     *      than main/master (e.g. develop, trunk).
+     *   2. Fall back to a local "main" or "master" branch when origin/HEAD
+     *      is unavailable (offline clones, no remote, freshly initialised).
+     * Without any of these we can still detect GONE branches but not MERGED. */
     git_reference *default_ref = NULL;
-    if (git_branch_lookup(&default_ref, repo, "main", GIT_BRANCH_LOCAL) == 0) {
-        strncpy(r->default_branch, "main", sizeof(r->default_branch) - 1);
-    } else if (git_branch_lookup(&default_ref, repo, "master", GIT_BRANCH_LOCAL) == 0) {
-        strncpy(r->default_branch, "master", sizeof(r->default_branch) - 1);
-    } else {
-        default_ref = NULL;
-        r->default_branch[0] = '\0';
+    r->default_branch[0] = '\0';
+
+    git_reference *origin_head = NULL;
+    if (git_reference_lookup(&origin_head, repo, "refs/remotes/origin/HEAD") == 0) {
+        git_reference *resolved = NULL;
+        if (git_reference_resolve(&resolved, origin_head) == 0) {
+            const char *full = git_reference_name(resolved);
+            const char *prefix = "refs/remotes/origin/";
+            size_t pn = strlen(prefix);
+            if (full && strncmp(full, prefix, pn) == 0) {
+                const char *short_name = full + pn;
+                /* Only adopt it when a matching local branch exists. */
+                if (git_branch_lookup(&default_ref, repo, short_name, GIT_BRANCH_LOCAL) == 0) {
+                    strncpy(r->default_branch, short_name, sizeof(r->default_branch) - 1);
+                    r->default_branch[sizeof(r->default_branch) - 1] = '\0';
+                }
+            }
+            git_reference_free(resolved);
+        }
+        git_reference_free(origin_head);
+    }
+
+    if (!default_ref) {
+        if (git_branch_lookup(&default_ref, repo, "main", GIT_BRANCH_LOCAL) == 0) {
+            strncpy(r->default_branch, "main", sizeof(r->default_branch) - 1);
+        } else if (git_branch_lookup(&default_ref, repo, "master", GIT_BRANCH_LOCAL) == 0) {
+            strncpy(r->default_branch, "master", sizeof(r->default_branch) - 1);
+        } else {
+            default_ref = NULL;
+        }
     }
 
     git_oid default_oid;

@@ -226,7 +226,7 @@ Switched to branch: feature-x
 | `merged` | The branch tip is reachable from the default branch — i.e. it was merged via a regular merge or fast-forward. |
 | `squash` | The branch's cumulative diff matches a single commit on the default branch — typical for "Squash & merge" workflows. |
 
-```
+```text
 gitls stale ~/projects
 
 Scanned: /Users/sven/projects

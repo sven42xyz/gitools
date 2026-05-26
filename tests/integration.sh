@@ -616,10 +616,55 @@ fi
 # ── stale --older-than: invalid duration rejected ─────────────────────────────
 printf "\nstale --older-than: invalid duration\n"
 check_exit "invalid duration" 1 "$GITLS" stale --older-than xyz "$WORK/stale-recent"
+check_exit "zero duration rejected" 1 "$GITLS" stale --older-than 0d "$WORK/stale-recent"
 
 # ── --older-than without stale ────────────────────────────────────────────────
 printf "\n--older-than without stale\n"
 check_exit "rejected" 1 "$GITLS" --older-than 1d "$WORK/stale-recent"
+
+# ── stale --yes without --prune rejected ──────────────────────────────────────
+printf "\nstale --yes without --prune\n"
+check_exit "rejected" 1 "$GITLS" stale --yes "$WORK/stale-recent"
+
+# ── stale: custom default branch (origin/HEAD points elsewhere) ───────────────
+printf "\nstale: custom default branch\n"
+BARE_C="$WORK/custom-bare.git"
+git init --bare -q "$BARE_C"
+D="$WORK/custom-default"
+git clone -q "$BARE_C" "$D" 2>/dev/null
+git -C "$D" config user.email "test@gitls.test"
+git -C "$D" config user.name "Test"
+git -C "$D" commit -q --allow-empty -m "init"
+# Use 'develop' as the default branch — neither main nor master.
+current=$(git -C "$D" symbolic-ref --short HEAD)
+git -C "$D" branch -m "$current" develop
+git -C "$D" push -q -u origin develop
+git -C "$BARE_C" symbolic-ref HEAD refs/heads/develop
+git -C "$D" remote set-head origin develop >/dev/null
+git -C "$D" checkout -q -b feat-c
+git -C "$D" commit -q --allow-empty -m "feat work"
+git -C "$D" checkout -q develop
+git -C "$D" merge -q --no-ff feat-c -m "merge"
+out=$("$GITLS" --no-color stale "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "default: develop" &&
+   printf '%s' "$out" | grep -qE "merged.*feat-c"; then
+    printf "  ok  custom default branch resolved\n"; passed=$((passed + 1))
+else
+    printf "FAIL  custom default branch resolved\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── config: protected_branches trims whitespace ───────────────────────────────
+printf "\nconfig: protected_branches whitespace\n"
+D="$WORK/stale-trim"; mkmain "$D"
+git -C "$D" checkout -q -b release
+git -C "$D" commit -q --allow-empty -m "release work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff release -m "merge"
+# Note the leading space — should still match the branch name "release".
+printf 'protected_branches=develop, release\n' > "$CFG"
+check "trimmed token matches" "No stale branches found" \
+    env GITLS_CONFIG="$CFG" "$GITLS" --no-color stale "$D"
 
 # ── stale --prune --yes: refuses gone+unmerged ────────────────────────────────
 printf "\nstale --prune: refused unmerged\n"

@@ -122,6 +122,14 @@ void load_config(void) {
             size_t idx = 0;
             char *tok = strtok(copy, ",");
             while (tok && idx < count) {
+                /* Trim leading / trailing whitespace so "develop, staging"
+                 * does not store " staging" and silently fail to match. */
+                while (*tok == ' ' || *tok == '\t') tok++;
+                char *end = tok + strlen(tok);
+                while (end > tok && (end[-1] == ' ' || end[-1] == '\t'))
+                    *--end = '\0';
+                if (*tok == '\0') { tok = strtok(NULL, ","); continue; }
+
                 char *dup = strdup(tok);
                 if (!dup) {
                     for (size_t i = 0; i < idx; i++) free(arr[i]);

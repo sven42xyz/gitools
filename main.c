@@ -33,7 +33,9 @@ static long parse_duration(const char *s) {
     char *end;
     errno = 0;
     long n = strtol(s, &end, 10);
-    if (errno || n < 0 || end == s || *end == '\0' || *(end + 1) != '\0') return -1;
+    /* Reject zero and negative durations — they would silently disable the
+     * filter while still appearing on the command line. */
+    if (errno || n <= 0 || end == s || *end == '\0' || *(end + 1) != '\0') return -1;
     switch (*end) {
         case 's': return n;
         case 'h': return n * 3600L;
@@ -196,6 +198,10 @@ int main(int argc, char **argv) {
     }
     if ((opt_prune || opt_yes || opt_older_than_secs > 0) && !opt_stale) {
         fprintf(stderr, "Error: --prune/--yes/--older-than require the 'stale' subcommand\n");
+        return 1;
+    }
+    if (opt_yes && !opt_prune) {
+        fprintf(stderr, "Error: --yes requires --prune\n");
         return 1;
     }
 
