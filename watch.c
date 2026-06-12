@@ -308,18 +308,17 @@ void run_watch(const char *abs_dir) {
             opt_switch_branch[sizeof(opt_switch_branch) - 1] = '\0';
         }
 
-        /* network/switch actions can take a moment — animate a spinner with the
-         * action verb while the (silent, in watch mode) scan runs */
+        /* network/switch actions can take a moment — keep the current table on
+         * screen and animate a spinner with the action verb on the line below
+         * the footer (the cursor sits there from the previous render). The
+         * table is refreshed in place once the action completes. */
         char spinmsg[PATH_MAX + 96];
         bool spinning = false;
         if (action) {
             const char *verb = action == 'f' ? "Fetching"
                              : action == 'p' ? "Pulling"
                              :                 "Switching";
-            int tw = term_width();
-            printf(CURSOR_HOME "%sScanned:%s %s\n\n" CLEAR_TO_END,
-                   C(COL_BOLD), C(COL_RESET),
-                   tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir);
+            printf("\r" CLEAR_TO_END);                            /* clear any picker */
             printf("  %s%s…%s", C(COL_DIM), verb, C(COL_RESET));  /* no-color fallback */
             fflush(stdout);
 
