@@ -100,6 +100,8 @@ extern Repo  *g_repos;
 extern size_t g_repo_count;
 extern char **g_paths;
 extern size_t g_path_count;
+extern char **g_recent_branches;
+extern size_t g_recent_branch_count;
 
 /* ── Function prototypes ───────────────────────────────────────────────────── */
 
@@ -112,6 +114,8 @@ int  git_available(void);
 void collect_path(const char *path);
 void process_all_repos(const char *dir);
 void free_repo_collection(void);
+void collect_recent_branches(void);
+void free_recent_branches(void);
 
 /* display.c */
 const char *C(const char *color);

@@ -70,6 +70,93 @@ void collect_path(const char *path) {
 Repo  *g_repos     = NULL;
 size_t g_repo_count = 0;
 
+/* ── Recent branches (for the watch-mode switch picker) ─────────────────────── */
+char  **g_recent_branches    = NULL;
+size_t  g_recent_branch_count = 0;
+
+typedef struct { char name[256]; git_time_t t; } BranchEnt;
+
+static int branch_cmp(const void *a, const void *b) {
+    const BranchEnt *x = a, *y = b;
+    if (x->t < y->t) return 1;     /* most recent first */
+    if (x->t > y->t) return -1;
+    return strcmp(x->name, y->name);
+}
+
+void free_recent_branches(void) {
+    for (size_t i = 0; i < g_recent_branch_count; i++)
+        free(g_recent_branches[i]);
+    free(g_recent_branches);
+    g_recent_branches     = NULL;
+    g_recent_branch_count = 0;
+}
+
+/*
+ * Build a de-duplicated list of local branch names across all collected repos,
+ * ordered by most recent commit date. Used by the watch-mode switch picker.
+ * Must be called while g_paths is still populated.
+ */
+void collect_recent_branches(void) {
+    free_recent_branches();
+
+    size_t cap = 0, n = 0;
+    BranchEnt *ents = NULL;
+
+    for (size_t i = 0; i < g_path_count; i++) {
+        git_repository *repo = NULL;
+        if (git_repository_open(&repo, g_paths[i]) != 0) continue;
+
+        git_branch_iterator *it = NULL;
+        if (git_branch_iterator_new(&it, repo, GIT_BRANCH_LOCAL) == 0) {
+            git_reference *ref = NULL;
+            git_branch_t   type;
+            while (git_branch_next(&ref, &type, it) == 0) {
+                const char *name = NULL;
+                if (git_branch_name(&name, ref) == 0 && name) {
+                    git_time_t t = 0;
+                    git_object *obj = NULL;
+                    if (git_reference_peel(&obj, ref, GIT_OBJECT_COMMIT) == 0) {
+                        t = git_commit_time((git_commit *)obj);
+                        git_object_free(obj);
+                    }
+                    /* upsert: keep the most recent timestamp per branch name */
+                    size_t j;
+                    for (j = 0; j < n; j++)
+                        if (strcmp(ents[j].name, name) == 0) break;
+                    if (j < n) {
+                        if (t > ents[j].t) ents[j].t = t;
+                    } else {
+                        if (n == cap) {
+                            size_t ncap = cap ? cap * 2 : 16;
+                            BranchEnt *tmp = realloc(ents, ncap * sizeof(*ents));
+                            if (!tmp) { git_reference_free(ref); break; }
+                            ents = tmp;
+                            cap  = ncap;
+                        }
+                        snprintf(ents[n].name, sizeof(ents[n].name), "%s", name);
+                        ents[n].t = t;
+                        n++;
+                    }
+                }
+                git_reference_free(ref);
+            }
+            git_branch_iterator_free(it);
+        }
+        git_repository_free(repo);
+    }
+
+    if (n == 0) { free(ents); return; }
+
+    qsort(ents, n, sizeof(*ents), branch_cmp);
+
+    g_recent_branches = malloc(n * sizeof(char *));
+    if (!g_recent_branches) { free(ents); return; }
+    for (size_t i = 0; i < n; i++)
+        g_recent_branches[i] = strdup(ents[i].name);   /* NULL on OOM is tolerated */
+    g_recent_branch_count = n;
+    free(ents);
+}
+
 /*
  * Free the collected paths and repo array, resetting all counters so the
  * scan can be repeated (used by the watch loop between refreshes).

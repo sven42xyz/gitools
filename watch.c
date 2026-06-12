@@ -114,42 +114,141 @@ static WatchEvent wait_for_event(int interval_sec, char *key_out) {
     }
 }
 
+/* ── Branch picker ─────────────────────────────────────────────────────────── */
+#define PICK_VISIBLE 8     /* max branch rows shown at once */
+
+typedef enum {
+    K_NONE, K_CHAR, K_ENTER, K_ESC, K_TAB, K_BACKSPACE, K_UP, K_DOWN, K_EOF
+} Key;
+
+/* Read one logical key, decoding arrow-key CSI sequences (ESC [ A/B). */
+static Key read_key(char *ch) {
+    char c;
+    if (read(STDIN_FILENO, &c, 1) <= 0) return K_NONE;
+
+    if (c == '\r' || c == '\n')      return K_ENTER;
+    if (c == '\t')                   return K_TAB;
+    if (c == 127 || c == 8)          return K_BACKSPACE;
+    if (c == 3)                      return K_ESC;   /* Ctrl-C */
+    if (c == 27) {                                    /* ESC or CSI sequence */
+        struct pollfd p = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
+        if (poll(&p, 1, 40) > 0) {
+            char b1;
+            if (read(STDIN_FILENO, &b1, 1) > 0 && b1 == '[') {
+                char b2;
+                if (read(STDIN_FILENO, &b2, 1) > 0) {
+                    if (b2 == 'A') return K_UP;
+                    if (b2 == 'B') return K_DOWN;
+                }
+                return K_NONE;   /* some other CSI sequence — ignore */
+            }
+        }
+        return K_ESC;
+    }
+    if (c >= 0x20 && c < 0x7f) { *ch = c; return K_CHAR; }
+    return K_NONE;
+}
+
+/* Case-insensitive substring test. */
+static bool ci_contains(const char *hay, const char *needle) {
+    if (!*needle) return true;
+    for (const char *h = hay; *h; h++) {
+        const char *a = h, *b = needle;
+        while (*a && *b && (*a | 0x20) == (*b | 0x20)) { a++; b++; }
+        if (!*b) return true;
+    }
+    return false;
+}
+
+static void draw_picker(const char *buf, const char **filt, size_t nfilt,
+                        size_t sel, size_t off) {
+    printf(CURSOR_HOME CLEAR_TO_END);
+    printf("  %sSwitch all clean repos to a branch%s\n\n",
+           C(COL_BOLD), C(COL_RESET));
+    printf("  branch: %s%s%s\xe2\x96\x8f\n", C(COL_CYAN), buf, C(COL_RESET));
+    printf("  %s\xe2\x86\x91/\xe2\x86\x93 navigate \xc2\xb7 Tab/Enter select \xc2\xb7 "
+           "Esc cancel%s\n\n", C(COL_DIM), C(COL_RESET));
+
+    if (nfilt == 0) {
+        printf("  %s(no matching branches \xe2\x80\x94 type a name and press Enter)%s\n",
+               C(COL_DIM), C(COL_RESET));
+    } else {
+        for (size_t i = off; i < nfilt && i < off + PICK_VISIBLE; i++) {
+            if (i == sel)
+                printf("  %s\xe2\x9d\xb1 %s%s\n", C(COL_GREEN), filt[i], C(COL_RESET));
+            else
+                printf("    %s%s%s\n", C(COL_DIM), filt[i], C(COL_RESET));
+        }
+        if (nfilt > PICK_VISIBLE)
+            printf("  %s(%zu more)%s\n", C(COL_DIM), nfilt - PICK_VISIBLE, C(COL_RESET));
+    }
+    fflush(stdout);
+}
+
 /*
- * Prompt for a branch name on the current line and read it in raw mode.
- * Enter confirms, Esc / Ctrl-C cancels, Backspace deletes. Returns true with
- * the (non-empty) name in buf, false if cancelled.
+ * Interactive branch picker. Shows the recently-active branches (most recent
+ * first) below an editable field; typing filters the list, arrow keys move the
+ * selection, Tab/Enter choose it, Esc / Ctrl-C cancel. Free-form names are
+ * allowed via the text field. Returns true with the chosen name in out.
  */
-static bool read_branch(char *buf, size_t n) {
+static bool read_branch(char *out, size_t n) {
+    char buf[256] = "";
     size_t len = 0;
-    buf[0] = '\0';
-    write_seq(CURSOR_SHOW);
+
+    const char *filt[256];
+    size_t nfilt = 0, sel = 0, off = 0;
 
     for (;;) {
-        printf("\r" CLEAR_TO_END "  %sswitch to branch:%s %s",
-               C(COL_BOLD), C(COL_RESET), buf);
-        fflush(stdout);
+        /* recompute the filtered view from the current text */
+        nfilt = 0;
+        for (size_t i = 0; i < g_recent_branch_count && nfilt < 256; i++)
+            if (g_recent_branches[i] && ci_contains(g_recent_branches[i], buf))
+                filt[nfilt++] = g_recent_branches[i];
+        if (sel >= nfilt) sel = nfilt ? nfilt - 1 : 0;
+        if (sel < off)                  off = sel;
+        if (sel >= off + PICK_VISIBLE)  off = sel - PICK_VISIBLE + 1;
 
-        if (g_watch_stop) { write_seq(CURSOR_HIDE); return false; }
+        draw_picker(buf, filt, nfilt, sel, off);
+
+        if (g_watch_stop) return false;
 
         struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
         int rc = poll(&pfd, 1, -1);
-        if (rc < 0) { if (errno == EINTR) continue; break; }
+        if (rc < 0) { if (errno == EINTR) continue; return false; }
+        if (rc == 0) continue;
 
-        char c;
-        if (read(STDIN_FILENO, &c, 1) <= 0) continue;
-        if (c == '\r' || c == '\n')        { write_seq(CURSOR_HIDE); return len > 0; }
-        if (c == 27 /* Esc */ || c == 3)   { write_seq(CURSOR_HIDE); return false; }
-        if (c == 127 || c == 8) {           /* Backspace */
-            if (len > 0) buf[--len] = '\0';
-            continue;
-        }
-        if (c >= 0x20 && c < 0x7f && len + 1 < n) {
-            buf[len++] = c;
-            buf[len]   = '\0';
+        char ch = 0;
+        switch (read_key(&ch)) {
+            case K_ESC:
+                return false;
+            case K_UP:
+                if (sel > 0) sel--;
+                break;
+            case K_DOWN:
+                if (sel + 1 < nfilt) sel++;
+                break;
+            case K_TAB:
+                if (nfilt > 0) {
+                    snprintf(out, n, "%s", filt[sel]);
+                    return true;
+                }
+                break;
+            case K_ENTER:
+                /* prefer the highlighted match (so typing to filter then Enter
+                 * selects it); fall back to the literal text for a new name */
+                if (nfilt > 0)  { snprintf(out, n, "%s", filt[sel]); return true; }
+                if (len > 0)    { snprintf(out, n, "%s", buf);       return true; }
+                break;
+            case K_BACKSPACE:
+                if (len > 0) buf[--len] = '\0';
+                break;
+            case K_CHAR:
+                if (len + 1 < sizeof(buf)) { buf[len++] = ch; buf[len] = '\0'; }
+                break;
+            default:
+                break;
         }
     }
-    write_seq(CURSOR_HIDE);
-    return false;
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
@@ -188,6 +287,10 @@ void run_watch(const char *abs_dir) {
     char note[128]   = "";
 
     while (!g_watch_stop) {
+        /* free the previous tick's scan here (not before the wait) so g_paths
+         * stays available for the branch picker while we wait for input */
+        free_repo_collection();
+
         /* translate a pending action into the globals the scan honours */
         opt_fetch  = (action == 'f');
         opt_pull   = (action == 'p');
@@ -221,8 +324,6 @@ void run_watch(const char *abs_dir) {
         printf(CLEAR_TO_END);
         fflush(stdout);
 
-        free_repo_collection();
-
         /* clear one-shot action state so it does not repeat on the next tick */
         opt_fetch = opt_pull = opt_switch = false;
         action = 0;
@@ -242,10 +343,14 @@ void run_watch(const char *abs_dir) {
                 snprintf(note, sizeof(note), "pulled");
                 break;
             case 's':
+                /* g_paths is still populated — gather recent branches for the
+                 * picker, then prompt */
+                collect_recent_branches();
                 if (read_branch(branch, sizeof(branch))) {
                     action = 's';
                     snprintf(note, sizeof(note), "switched to %s", branch);
                 }
+                free_recent_branches();
                 break;
             case 'r':
             default:
@@ -254,5 +359,7 @@ void run_watch(const char *abs_dir) {
         }
     }
 
+    free_repo_collection();
+    free_recent_branches();
     restore_terminal();
 }
