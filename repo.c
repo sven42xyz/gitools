@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <time.h>
 
 extern char **environ;
 #include "gitools.h"
@@ -383,6 +384,423 @@ static PullResult do_pull(git_repository *repo, Repo *r) {
     return PR_ERROR;
 }
 
+/* ── Patch-id cache for squash-merge detection ─────────────────────────────── */
+/*
+ * Squash-merge detection compares each candidate branch's cumulative diff
+ * (merge-base → branch tip) against the patch-id of each recent default-branch
+ * commit. A match means the branch's work was squashed into a single default
+ * commit and the branch can be considered merged.
+ *
+ * We cap the default-branch walk at SQUASH_DEFAULT_DEPTH commits to bound the
+ * cost on large histories — squash merges are typically recent.
+ */
+#define SQUASH_DEFAULT_DEPTH 500
+
+static int commit_first_parent_patchid(git_repository *repo, const git_oid *commit_oid,
+                                       git_oid *out) {
+    git_commit *commit = NULL;
+    if (git_commit_lookup(&commit, repo, commit_oid) != 0) return -1;
+
+    git_tree *new_tree = NULL;
+    if (git_commit_tree(&new_tree, commit) != 0) {
+        git_commit_free(commit);
+        return -1;
+    }
+
+    git_tree *old_tree = NULL;
+    if (git_commit_parentcount(commit) > 0) {
+        git_commit *parent = NULL;
+        if (git_commit_parent(&parent, commit, 0) == 0) {
+            git_commit_tree(&old_tree, parent);
+            git_commit_free(parent);
+        }
+    }
+
+    git_diff *diff = NULL;
+    int rc = -1;
+    if (git_diff_tree_to_tree(&diff, repo, old_tree, new_tree, NULL) == 0) {
+        if (git_diff_patchid(out, diff, NULL) == 0) rc = 0;
+        git_diff_free(diff);
+    }
+
+    if (old_tree) git_tree_free(old_tree);
+    git_tree_free(new_tree);
+    git_commit_free(commit);
+    return rc;
+}
+
+static int branch_cumulative_patchid(git_repository *repo, const git_oid *branch_tip,
+                                     const git_oid *default_tip, git_oid *out) {
+    git_oid mb;
+    if (git_merge_base(&mb, repo, branch_tip, default_tip) != 0) return -1;
+
+    git_commit *mb_commit = NULL, *branch_commit = NULL;
+    if (git_commit_lookup(&mb_commit, repo, &mb) != 0) return -1;
+    if (git_commit_lookup(&branch_commit, repo, branch_tip) != 0) {
+        git_commit_free(mb_commit);
+        return -1;
+    }
+
+    git_tree *mb_tree = NULL, *branch_tree = NULL;
+    git_commit_tree(&mb_tree, mb_commit);
+    git_commit_tree(&branch_tree, branch_commit);
+
+    int rc = -1;
+    if (mb_tree && branch_tree) {
+        git_diff *diff = NULL;
+        if (git_diff_tree_to_tree(&diff, repo, mb_tree, branch_tree, NULL) == 0) {
+            if (git_diff_patchid(out, diff, NULL) == 0) rc = 0;
+            git_diff_free(diff);
+        }
+    }
+
+    if (mb_tree) git_tree_free(mb_tree);
+    if (branch_tree) git_tree_free(branch_tree);
+    git_commit_free(mb_commit);
+    git_commit_free(branch_commit);
+    return rc;
+}
+
+/*
+ * Walk the default branch (up to SQUASH_DEFAULT_DEPTH commits), compute each
+ * commit's first-parent patch-id, and return them as a newly allocated array.
+ * Caller must free *out_ids.
+ */
+static int build_default_patchids(git_repository *repo, const git_oid *default_tip,
+                                  git_oid **out_ids, size_t *out_count) {
+    *out_ids = NULL;
+    *out_count = 0;
+
+    git_revwalk *walk = NULL;
+    if (git_revwalk_new(&walk, repo) != 0) return -1;
+    if (git_revwalk_push(walk, default_tip) != 0) {
+        git_revwalk_free(walk);
+        return -1;
+    }
+
+    size_t cap = 64;
+    git_oid *ids = malloc(cap * sizeof(*ids));
+    if (!ids) { git_revwalk_free(walk); return -1; }
+    size_t count = 0;
+
+    git_oid commit_oid;
+    int seen = 0;
+    while (seen < SQUASH_DEFAULT_DEPTH && git_revwalk_next(&commit_oid, walk) == 0) {
+        seen++;
+        git_oid pid;
+        if (commit_first_parent_patchid(repo, &commit_oid, &pid) != 0) continue;
+        if (count >= cap) {
+            size_t ncap = cap * 2;
+            git_oid *tmp = realloc(ids, ncap * sizeof(*ids));
+            if (!tmp) { free(ids); git_revwalk_free(walk); return -1; }
+            ids = tmp;
+            cap = ncap;
+        }
+        git_oid_cpy(&ids[count++], &pid);
+    }
+
+    git_revwalk_free(walk);
+    *out_ids = ids;
+    *out_count = count;
+    return 0;
+}
+
+static int patchid_in_set(const git_oid *needle, const git_oid *set, size_t count) {
+    for (size_t i = 0; i < count; i++)
+        if (git_oid_cmp(needle, &set[i]) == 0) return 1;
+    return 0;
+}
+
+/* ── Stale branches ────────────────────────────────────────────────────────── */
+/*
+ * Detect local branches that are either:
+ *   STR_GONE   — upstream tracking branch is configured but no longer exists
+ *   STR_MERGED — fully reachable from the repo's default branch (main/master)
+ *
+ * Skips the current HEAD branch and the default branch itself. The current
+ * HEAD's *short* name is compared (e.g. "main"), matching what fill_branch
+ * stores into r->branch.
+ */
+static void append_stale(Repo *r, size_t *cap, const char *name, StaleReason reason) {
+    /* --only <reasons>: filter at append so call sites stay clean. */
+    if (opt_only_mask && !(opt_only_mask & (1u << reason))) return;
+
+    if (r->stale_count >= *cap) {
+        size_t ncap = *cap ? *cap * 2 : 8;
+        StaleBranch *tmp = realloc(r->stale, ncap * sizeof(*tmp));
+        if (!tmp) return;   /* out of memory: silently drop further entries */
+        r->stale = tmp;
+        *cap = ncap;
+    }
+    StaleBranch *sb = &r->stale[r->stale_count++];
+    strncpy(sb->name, name, sizeof(sb->name) - 1);
+    sb->name[sizeof(sb->name) - 1] = '\0';
+    sb->reason = reason;
+}
+
+static void fill_stale_branches(Repo *r, git_repository *repo) {
+    /* Resolve default branch:
+     *   1. refs/remotes/origin/HEAD — the remote's published default. This is
+     *      what "default branch" actually means for repos that use names other
+     *      than main/master (e.g. develop, trunk).
+     *   2. Fall back to a local "main" or "master" branch when origin/HEAD
+     *      is unavailable (offline clones, no remote, freshly initialised).
+     * Without any of these we can still detect GONE branches but not MERGED. */
+    git_reference *default_ref = NULL;
+    r->default_branch[0] = '\0';
+
+    git_reference *origin_head = NULL;
+    if (git_reference_lookup(&origin_head, repo, "refs/remotes/origin/HEAD") == 0) {
+        git_reference *resolved = NULL;
+        if (git_reference_resolve(&resolved, origin_head) == 0) {
+            const char *full = git_reference_name(resolved);
+            const char *prefix = "refs/remotes/origin/";
+            size_t pn = strlen(prefix);
+            if (full && strncmp(full, prefix, pn) == 0) {
+                const char *short_name = full + pn;
+                /* Only adopt it when a matching local branch exists. */
+                if (git_branch_lookup(&default_ref, repo, short_name, GIT_BRANCH_LOCAL) == 0) {
+                    strncpy(r->default_branch, short_name, sizeof(r->default_branch) - 1);
+                    r->default_branch[sizeof(r->default_branch) - 1] = '\0';
+                }
+            }
+            git_reference_free(resolved);
+        }
+        git_reference_free(origin_head);
+    }
+
+    if (!default_ref) {
+        if (git_branch_lookup(&default_ref, repo, "main", GIT_BRANCH_LOCAL) == 0) {
+            strncpy(r->default_branch, "main", sizeof(r->default_branch) - 1);
+        } else if (git_branch_lookup(&default_ref, repo, "master", GIT_BRANCH_LOCAL) == 0) {
+            strncpy(r->default_branch, "master", sizeof(r->default_branch) - 1);
+        } else {
+            default_ref = NULL;
+        }
+    }
+
+    git_oid default_oid;
+    int have_default_oid = 0;
+    if (default_ref) {
+        git_object *obj = NULL;
+        if (git_reference_peel(&obj, default_ref, GIT_OBJECT_COMMIT) == 0) {
+            git_oid_cpy(&default_oid, git_object_id(obj));
+            have_default_oid = 1;
+            git_object_free(obj);
+        }
+    }
+
+    /* Build patch-id cache of default branch (for squash detection). Built
+     * lazily on first need; safe to leave NULL if default branch is unknown. */
+    git_oid *default_patchids = NULL;
+    size_t   default_patchids_count = 0;
+    int      default_patchids_built = 0;
+
+    git_branch_iterator *it = NULL;
+    if (git_branch_iterator_new(&it, repo, GIT_BRANCH_LOCAL) != 0) {
+        if (default_ref) git_reference_free(default_ref);
+        return;
+    }
+
+    size_t cap = 0;
+    git_reference *ref = NULL;
+    git_branch_t   bt;
+    while (git_branch_next(&ref, &bt, it) == 0) {
+        const char *name = NULL;
+        if (git_branch_name(&name, ref) != 0 || !name) {
+            git_reference_free(ref);
+            continue;
+        }
+
+        /* Skip the current HEAD branch and the default branch itself */
+        if (r->branch[0] && strcmp(name, r->branch) == 0) { git_reference_free(ref); continue; }
+        if (r->default_branch[0] && strcmp(name, r->default_branch) == 0) {
+            git_reference_free(ref);
+            continue;
+        }
+
+        /* Always protect main/master implicitly; they are conventional default
+         * branches and should never be flagged even when not the resolved
+         * default of this particular repo. */
+        int is_protected = (strcmp(name, "main") == 0 || strcmp(name, "master") == 0);
+        for (size_t k = 0; !is_protected && k < opt_protected_branches_count; k++) {
+            if (strcmp(name, opt_protected_branches[k]) == 0)
+                is_protected = 1;
+        }
+        if (is_protected) { git_reference_free(ref); continue; }
+
+        /* --older-than filter: skip branches whose tip commit is too recent.
+         * Applied before classification to avoid wasted patch-id work. */
+        if (opt_older_than_secs > 0) {
+            git_object *bobj = NULL;
+            if (git_reference_peel(&bobj, ref, GIT_OBJECT_COMMIT) != 0) {
+                git_reference_free(ref);
+                continue;
+            }
+            git_time_t t = git_commit_time((git_commit *)bobj);
+            git_object_free(bobj);
+            time_t now = time(NULL);
+            if ((long)((time_t)now - (time_t)t) < opt_older_than_secs) {
+                git_reference_free(ref);
+                continue;
+            }
+        }
+
+        /* GONE: upstream is configured but the remote-tracking ref doesn't exist. */
+        git_buf upstream_name = GIT_BUF_INIT;
+        int has_upstream_cfg =
+            (git_branch_upstream_name(&upstream_name, repo, git_reference_name(ref)) == 0);
+        if (has_upstream_cfg) {
+            git_reference *upstream_ref = NULL;
+            int upstream_exists =
+                (git_reference_lookup(&upstream_ref, repo, upstream_name.ptr) == 0);
+            if (upstream_ref) git_reference_free(upstream_ref);
+            git_buf_dispose(&upstream_name);
+            if (!upstream_exists) {
+                append_stale(r, &cap, name, STR_GONE);
+                git_reference_free(ref);
+                continue;
+            }
+        } else {
+            git_buf_dispose(&upstream_name);
+        }
+
+        /* MERGED / SQUASHED: both need the default OID. */
+        if (have_default_oid) {
+            git_object *bobj = NULL;
+            if (git_reference_peel(&bobj, ref, GIT_OBJECT_COMMIT) == 0) {
+                const git_oid *boid = git_object_id(bobj);
+
+                int classified = 0;
+                if (git_oid_cmp(boid, &default_oid) != 0) {
+                    if (git_graph_descendant_of(repo, &default_oid, boid) == 1) {
+                        append_stale(r, &cap, name, STR_MERGED);
+                        classified = 1;
+                    }
+                }
+
+                /* SQUASHED: cumulative branch diff vs merge-base matches some
+                 * default-branch commit's patch-id. Build the cache lazily. */
+                if (!classified) {
+                    if (!default_patchids_built) {
+                        build_default_patchids(repo, &default_oid,
+                                               &default_patchids, &default_patchids_count);
+                        default_patchids_built = 1;
+                    }
+                    if (default_patchids_count > 0) {
+                        git_oid bpid;
+                        if (branch_cumulative_patchid(repo, boid, &default_oid, &bpid) == 0
+                            && patchid_in_set(&bpid, default_patchids, default_patchids_count))
+                            append_stale(r, &cap, name, STR_SQUASHED);
+                    }
+                }
+                git_object_free(bobj);
+            }
+        }
+
+        git_reference_free(ref);
+    }
+
+    free(default_patchids);
+    git_branch_iterator_free(it);
+    if (default_ref) git_reference_free(default_ref);
+}
+
+/* ── Prune stale branches ──────────────────────────────────────────────────── */
+/*
+ * Delete branches collected by fill_stale_branches(). Runs sequentially after
+ * detection and after the user confirmation in main.c.
+ *
+ * Safety:
+ *   STR_MERGED — always safe (already verified merged into default).
+ *   STR_GONE   — re-verify reachability from default; refuse if there are
+ *                local commits not in default (avoids data loss).
+ *
+ * Per-branch result is stored in sb->action and rendered by display.c.
+ */
+void prune_stale_branches(void) {
+    size_t deleted = 0, refused = 0, errors = 0;
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        Repo *r = &g_repos[i];
+        if (r->stale_count == 0) continue;
+
+        git_repository *repo = NULL;
+        if (git_repository_open(&repo, r->path) != 0) {
+            for (size_t j = 0; j < r->stale_count; j++) {
+                r->stale[j].action = SA_ERROR;
+                errors++;
+            }
+            continue;
+        }
+
+        /* Re-resolve default branch OID for the merged-into check on GONE. */
+        git_oid default_oid;
+        int have_default_oid = 0;
+        if (r->default_branch[0]) {
+            git_reference *dref = NULL;
+            if (git_branch_lookup(&dref, repo, r->default_branch, GIT_BRANCH_LOCAL) == 0) {
+                git_object *obj = NULL;
+                if (git_reference_peel(&obj, dref, GIT_OBJECT_COMMIT) == 0) {
+                    git_oid_cpy(&default_oid, git_object_id(obj));
+                    have_default_oid = 1;
+                    git_object_free(obj);
+                }
+                git_reference_free(dref);
+            }
+        }
+
+        for (size_t j = 0; j < r->stale_count; j++) {
+            StaleBranch *sb = &r->stale[j];
+            git_reference *bref = NULL;
+            if (git_branch_lookup(&bref, repo, sb->name, GIT_BRANCH_LOCAL) != 0) {
+                sb->action = SA_ERROR;
+                errors++;
+                continue;
+            }
+
+            /* For GONE, verify the branch is fully reachable from default
+             * before deleting — otherwise local-only commits would be lost. */
+            if (sb->reason == STR_GONE) {
+                if (!have_default_oid) {
+                    sb->action = SA_REFUSED_UNMERGED;
+                    refused++;
+                    git_reference_free(bref);
+                    continue;
+                }
+                git_object *bobj = NULL;
+                int merged_in = 0;
+                if (git_reference_peel(&bobj, bref, GIT_OBJECT_COMMIT) == 0) {
+                    const git_oid *boid = git_object_id(bobj);
+                    if (git_oid_cmp(boid, &default_oid) == 0 ||
+                        git_graph_descendant_of(repo, &default_oid, boid) == 1)
+                        merged_in = 1;
+                    git_object_free(bobj);
+                }
+                if (!merged_in) {
+                    sb->action = SA_REFUSED_UNMERGED;
+                    refused++;
+                    git_reference_free(bref);
+                    continue;
+                }
+            }
+
+            if (git_branch_delete(bref) == 0) {
+                sb->action = SA_DELETED;
+                deleted++;
+            } else {
+                sb->action = SA_ERROR;
+                errors++;
+            }
+            git_reference_free(bref);
+        }
+
+        git_repository_free(repo);
+    }
+
+    print_prune_results(deleted, refused, errors);
+}
+
 /* ── Phase 1: local libgit2 queries (no subprocess) ────────────────────────── */
 /*
  * Called from worker threads — must NOT call fork/exec.
@@ -420,6 +838,9 @@ static void process_repo_local(const char *path, Repo *r) {
      * refresh them in phase 2 (stale data would just be overwritten anyway) */
     if (!opt_fetch && !opt_pull)
         fill_ahead_behind(r, repo);
+
+    if (opt_stale)
+        fill_stale_branches(r, repo);
 
     git_repository_free(repo);
 }

@@ -407,6 +407,108 @@ void print_pull_summary(const ColWidths *w) {
     printf("\n\n");
 }
 
+/* ── Stale branch summary ──────────────────────────────────────────────────── */
+void print_stale_summary(void) {
+    size_t total_stale = 0;
+    size_t repos_with_stale = 0;
+    size_t gone_total = 0, merged_total = 0, squashed_total = 0;
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        if (r->stale_count == 0) continue;
+        repos_with_stale++;
+
+        const char *name = strrchr(r->path, '/');
+        name = name ? name + 1 : r->path;
+
+        /* repo header: name + (default branch if known) */
+        printf("  %s%s%s", C(COL_CYAN), name, C(COL_RESET));
+        if (r->default_branch[0])
+            printf("  %s(default: %s)%s", C(COL_DIM), r->default_branch, C(COL_RESET));
+        printf("\n");
+
+        for (size_t j = 0; j < r->stale_count; j++) {
+            const StaleBranch *sb = &r->stale[j];
+            total_stale++;
+            const char *tag, *color;
+            switch (sb->reason) {
+                case STR_GONE:
+                    tag = "gone";    color = COL_RED;     gone_total++;     break;
+                case STR_MERGED:
+                    tag = "merged";  color = COL_YELLOW;  merged_total++;   break;
+                case STR_SQUASHED:
+                    tag = "squash";  color = COL_MAGENTA; squashed_total++; break;
+                default:
+                    tag = "?";       color = COL_DIM;                       break;
+            }
+            printf("    %s%-7s%s  %s%s%s\n",
+                C(color), tag, C(COL_RESET),
+                C(COL_YELLOW), sb->name, C(COL_RESET));
+        }
+        printf("\n");
+    }
+
+    if (total_stale == 0) {
+        printf("  No stale branches found.\n");
+        return;
+    }
+
+    printf("  %s%zu stale branch%s%s in %s%zu repo%s%s",
+        C(COL_BOLD), total_stale, total_stale == 1 ? "" : "es", C(COL_RESET),
+        C(COL_BOLD), repos_with_stale, repos_with_stale == 1 ? "" : "s", C(COL_RESET));
+    if (gone_total)
+        printf(" · %s%zu gone%s", C(COL_RED), gone_total, C(COL_RESET));
+    if (merged_total)
+        printf(" · %s%zu merged%s", C(COL_YELLOW), merged_total, C(COL_RESET));
+    if (squashed_total)
+        printf(" · %s%zu squashed%s", C(COL_MAGENTA), squashed_total, C(COL_RESET));
+    printf("\n");
+}
+
+/* ── Prune results ─────────────────────────────────────────────────────────── */
+void print_prune_results(size_t deleted, size_t refused, size_t errors) {
+    printf("%sPrune results:%s\n\n", C(COL_BOLD), C(COL_RESET));
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        if (r->stale_count == 0) continue;
+
+        const char *name = strrchr(r->path, '/');
+        name = name ? name + 1 : r->path;
+        printf("  %s%s%s\n", C(COL_CYAN), name, C(COL_RESET));
+
+        for (size_t j = 0; j < r->stale_count; j++) {
+            const StaleBranch *sb = &r->stale[j];
+            const char *tag, *color;
+            switch (sb->action) {
+                case SA_DELETED:
+                    tag = "deleted";  color = COL_GREEN;                       break;
+                case SA_REFUSED_UNMERGED:
+                    tag = "refused";  color = COL_YELLOW;                      break;
+                case SA_ERROR:
+                    tag = "error";    color = COL_RED;                         break;
+                default:
+                    tag = "skipped";  color = COL_DIM;                         break;
+            }
+            printf("    %s%-8s%s %s%s%s",
+                C(color), tag, C(COL_RESET),
+                C(COL_YELLOW), sb->name, C(COL_RESET));
+            if (sb->action == SA_REFUSED_UNMERGED)
+                printf("  %s(unmerged local commits)%s", C(COL_DIM), C(COL_RESET));
+            printf("\n");
+        }
+        printf("\n");
+    }
+
+    printf("  %s%zu deleted%s",
+        C(COL_GREEN), deleted, C(COL_RESET));
+    if (refused)
+        printf(" · %s%zu refused%s", C(COL_YELLOW), refused, C(COL_RESET));
+    if (errors)
+        printf(" · %s%zu errors%s", C(COL_RED), errors, C(COL_RESET));
+    printf("\n");
+}
+
 /* ── Spinner ────────────────────────────────────────────────────────────────── */
 static const char   *SPINNER_FRAMES[] = {
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"

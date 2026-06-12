@@ -421,6 +421,322 @@ else
     failed=$((failed + 1))
 fi
 
+# ── stale: helper to set up a repo with main as the default branch ────────────
+mkmain() {
+    dir="$1"
+    mkgit "$dir"
+    # Rename to main so assertions match the default-branch resolution order.
+    current=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null)
+    [ "$current" = "main" ] || git -C "$dir" branch -m main 2>/dev/null
+}
+
+# ── stale: no stale branches ──────────────────────────────────────────────────
+printf "\nstale: none\n"
+D="$WORK/stale-none"; mkmain "$D"
+check "no stale branches" "No stale branches found" "$GITLS" --no-color stale "$D"
+
+# ── stale: merged branch detected ─────────────────────────────────────────────
+printf "\nstale: merged branch\n"
+D="$WORK/stale-merged"; mkmain "$D"
+git -C "$D" checkout -q -b feature-m
+git -C "$D" commit -q --allow-empty -m "feature work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff feature-m -m "merge"
+out=$("$GITLS" --no-color stale "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "merged.*feature-m"; then
+    printf "  ok  merged branch listed\n"; passed=$((passed + 1))
+else
+    printf "FAIL  merged branch listed\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── stale: gone upstream detected ─────────────────────────────────────────────
+printf "\nstale: gone upstream\n"
+BARE_G="$WORK/stale-gone-bare.git"
+git init --bare -q "$BARE_G"
+D="$WORK/stale-gone"
+git clone -q "$BARE_G" "$D" 2>/dev/null
+git -C "$D" config user.email "test@gitls.test"
+git -C "$D" config user.name "Test"
+git -C "$D" commit -q --allow-empty -m "init"
+current=$(git -C "$D" symbolic-ref --short HEAD)
+[ "$current" = "main" ] || git -C "$D" branch -m main
+git -C "$D" push -q origin main
+git -C "$D" checkout -q -b doomed
+git -C "$D" commit -q --allow-empty -m "doomed"
+git -C "$D" push -q -u origin doomed
+git -C "$D" checkout -q main
+git -C "$D" push -q origin --delete doomed
+git -C "$D" remote prune origin >/dev/null
+out=$("$GITLS" --no-color stale "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "gone.*doomed"; then
+    printf "  ok  gone branch listed\n"; passed=$((passed + 1))
+else
+    printf "FAIL  gone branch listed\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── stale: invalid combination ────────────────────────────────────────────────
+printf "\nstale: invalid combination\n"
+check_exit "stale + -s rejected" 1 "$GITLS" stale -s foo "$WORK/stale-none"
+
+# ── stale --prune: requires stale ─────────────────────────────────────────────
+printf "\n--prune without stale\n"
+check_exit "rejected" 1 "$GITLS" --prune "$WORK/stale-none"
+
+# ── stale --prune --yes: deletes merged branch ────────────────────────────────
+printf "\nstale --prune: merged\n"
+D="$WORK/prune-merged"; mkmain "$D"
+git -C "$D" checkout -q -b f-merged
+git -C "$D" commit -q --allow-empty -m "merged work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff f-merged -m "merge"
+out=$("$GITLS" --no-color stale --prune --yes "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "deleted.*f-merged" &&
+   ! git -C "$D" rev-parse --verify -q f-merged >/dev/null; then
+    printf "  ok  merged branch deleted\n"; passed=$((passed + 1))
+else
+    printf "FAIL  merged branch deleted\n     got: %s\n     branch still exists: %s\n" \
+        "$out" "$(git -C "$D" branch)"
+    failed=$((failed + 1))
+fi
+
+# ── stale: protected_branches config skips listed branches ───────────────────
+printf "\nstale: protected_branches config\n"
+D="$WORK/stale-protected"; mkmain "$D"
+git -C "$D" checkout -q -b develop
+git -C "$D" commit -q --allow-empty -m "dev work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff develop -m "merge develop"
+# Without the config, develop would be listed as merged.
+printf 'protected_branches=develop\n' > "$CFG"
+check "develop omitted via config" "No stale branches found" \
+    env GITLS_CONFIG="$CFG" "$GITLS" --no-color stale "$D"
+
+# ── stale: main/master implicitly protected ───────────────────────────────────
+printf "\nstale: main/master implicit protection\n"
+D="$WORK/stale-implicit"; mkgit "$D"
+# Force default to master so a separate 'main' branch could otherwise be flagged
+git -C "$D" branch -m master 2>/dev/null
+git -C "$D" checkout -q -b main
+git -C "$D" commit -q --allow-empty -m "extra"
+git -C "$D" checkout -q master
+git -C "$D" merge -q --no-ff main -m "merge main into master"
+# Both default (master) and 'main' should be excluded.
+check "main not flagged on master-default repo" "No stale branches found" \
+    "$GITLS" --no-color stale "$D"
+
+# ── stale: squash-merged branch detected ──────────────────────────────────────
+printf "\nstale: squash-merged\n"
+D="$WORK/stale-squash"; mkmain "$D"
+git -C "$D" checkout -q -b feat-squash
+printf 'a\n' > "$D/a.txt"
+git -C "$D" add a.txt
+git -C "$D" commit -q -m "A"
+printf 'b\n' > "$D/b.txt"
+git -C "$D" add b.txt
+git -C "$D" commit -q -m "B"
+git -C "$D" checkout -q main
+git -C "$D" merge --squash feat-squash -q
+git -C "$D" commit -q -m "squashed"
+out=$("$GITLS" --no-color stale "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "squash.*feat-squash"; then
+    printf "  ok  squash-merged listed\n"; passed=$((passed + 1))
+else
+    printf "FAIL  squash-merged listed\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── stale: squash + extra commits NOT flagged (negative) ──────────────────────
+printf "\nstale: squash + extra commits\n"
+D="$WORK/stale-squash-extra"; mkmain "$D"
+git -C "$D" checkout -q -b feat-extra
+printf 'a\n' > "$D/a.txt"
+git -C "$D" add a.txt
+git -C "$D" commit -q -m "A"
+git -C "$D" checkout -q main
+git -C "$D" merge --squash feat-extra -q
+git -C "$D" commit -q -m "squashed"
+git -C "$D" checkout -q feat-extra
+printf 'x\n' > "$D/extra.txt"
+git -C "$D" add extra.txt
+git -C "$D" commit -q -m "post-squash work"
+git -C "$D" checkout -q main
+check "branch with post-squash work not flagged" "No stale branches found" \
+    "$GITLS" --no-color stale "$D"
+
+# ── stale --prune --yes: deletes squash-merged ────────────────────────────────
+printf "\nstale --prune: squash-merged\n"
+D="$WORK/prune-squash"; mkmain "$D"
+git -C "$D" checkout -q -b f-sq
+printf 'a\n' > "$D/a.txt"
+git -C "$D" add a.txt
+git -C "$D" commit -q -m "A"
+git -C "$D" checkout -q main
+git -C "$D" merge --squash f-sq -q
+git -C "$D" commit -q -m "squashed"
+out=$("$GITLS" --no-color stale --prune --yes "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "deleted.*f-sq" &&
+   ! git -C "$D" rev-parse --verify -q f-sq >/dev/null; then
+    printf "  ok  squash-merged deleted\n"; passed=$((passed + 1))
+else
+    printf "FAIL  squash-merged deleted\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── stale --older-than: recent stale not flagged ──────────────────────────────
+printf "\nstale --older-than: recent\n"
+D="$WORK/stale-recent"; mkmain "$D"
+git -C "$D" checkout -q -b recent-merged
+git -C "$D" commit -q --allow-empty -m "fresh"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff recent-merged -m "merge"
+# Recent commit (now) should be filtered out with --older-than 1d
+check "recent merged filtered" "No stale branches found" \
+    "$GITLS" --no-color stale --older-than 1d "$D"
+
+# ── stale --older-than: old stale still flagged ───────────────────────────────
+printf "\nstale --older-than: old\n"
+D="$WORK/stale-old"; mkmain "$D"
+git -C "$D" checkout -q -b old-merged
+# Backdate the tip commit by 10 days so --older-than 1d retains it.
+OLD_DATE="$(date -u -v-10d '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '10 days ago' '+%Y-%m-%dT%H:%M:%S')"
+GIT_AUTHOR_DATE="$OLD_DATE" GIT_COMMITTER_DATE="$OLD_DATE" \
+    git -C "$D" commit -q --allow-empty -m "old work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff old-merged -m "merge"
+out=$("$GITLS" --no-color stale --older-than 1d "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "merged.*old-merged"; then
+    printf "  ok  old merged retained\n"; passed=$((passed + 1))
+else
+    printf "FAIL  old merged retained\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── stale --older-than: invalid duration rejected ─────────────────────────────
+printf "\nstale --older-than: invalid duration\n"
+check_exit "invalid duration" 1 "$GITLS" stale --older-than xyz "$WORK/stale-recent"
+check_exit "zero duration rejected" 1 "$GITLS" stale --older-than 0d "$WORK/stale-recent"
+
+# ── --older-than without stale ────────────────────────────────────────────────
+printf "\n--older-than without stale\n"
+check_exit "rejected" 1 "$GITLS" --older-than 1d "$WORK/stale-recent"
+
+# ── stale --yes without --prune rejected ──────────────────────────────────────
+printf "\nstale --yes without --prune\n"
+check_exit "rejected" 1 "$GITLS" stale --yes "$WORK/stale-recent"
+
+# ── stale --only: filter by reason ────────────────────────────────────────────
+printf "\nstale --only: filter by reason\n"
+BARE_O="$WORK/only-bare.git"
+git init --bare -q "$BARE_O"
+D="$WORK/stale-only"
+git clone -q "$BARE_O" "$D" 2>/dev/null
+git -C "$D" config user.email "test@gitls.test"
+git -C "$D" config user.name "Test"
+git -C "$D" commit -q --allow-empty -m "init"
+current=$(git -C "$D" symbolic-ref --short HEAD)
+[ "$current" = "main" ] || git -C "$D" branch -m main
+git -C "$D" push -q -u origin main
+git -C "$D" checkout -q -b m-only
+git -C "$D" commit -q --allow-empty -m "m"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff m-only -m "merge m-only"
+git -C "$D" checkout -q -b g-only
+git -C "$D" commit -q --allow-empty -m "g"
+git -C "$D" push -q -u origin g-only
+git -C "$D" push -q origin --delete g-only
+git -C "$D" remote prune origin >/dev/null
+git -C "$D" checkout -q main
+
+out_gone=$("$GITLS" --no-color stale --only gone "$D" 2>&1)
+if printf '%s' "$out_gone" | grep -qE "gone.*g-only" &&
+   ! printf '%s' "$out_gone" | grep -qE "merged.*m-only"; then
+    printf "  ok  --only gone keeps only gone\n"; passed=$((passed + 1))
+else
+    printf "FAIL  --only gone keeps only gone\n     got: %s\n" "$out_gone"
+    failed=$((failed + 1))
+fi
+
+out_merged=$("$GITLS" --no-color stale --only merged "$D" 2>&1)
+if printf '%s' "$out_merged" | grep -qE "merged.*m-only" &&
+   ! printf '%s' "$out_merged" | grep -qE "gone.*g-only"; then
+    printf "  ok  --only merged keeps only merged\n"; passed=$((passed + 1))
+else
+    printf "FAIL  --only merged keeps only merged\n     got: %s\n" "$out_merged"
+    failed=$((failed + 1))
+fi
+
+check_exit "--only invalid reason"  1 "$GITLS" stale --only nope "$D"
+check_exit "--only without stale"   1 "$GITLS" --only gone "$D"
+
+# ── stale: custom default branch (origin/HEAD points elsewhere) ───────────────
+printf "\nstale: custom default branch\n"
+BARE_C="$WORK/custom-bare.git"
+git init --bare -q "$BARE_C"
+D="$WORK/custom-default"
+git clone -q "$BARE_C" "$D" 2>/dev/null
+git -C "$D" config user.email "test@gitls.test"
+git -C "$D" config user.name "Test"
+git -C "$D" commit -q --allow-empty -m "init"
+# Use 'develop' as the default branch — neither main nor master.
+current=$(git -C "$D" symbolic-ref --short HEAD)
+git -C "$D" branch -m "$current" develop
+git -C "$D" push -q -u origin develop
+git -C "$BARE_C" symbolic-ref HEAD refs/heads/develop
+git -C "$D" remote set-head origin develop >/dev/null
+git -C "$D" checkout -q -b feat-c
+git -C "$D" commit -q --allow-empty -m "feat work"
+git -C "$D" checkout -q develop
+git -C "$D" merge -q --no-ff feat-c -m "merge"
+out=$("$GITLS" --no-color stale "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "default: develop" &&
+   printf '%s' "$out" | grep -qE "merged.*feat-c"; then
+    printf "  ok  custom default branch resolved\n"; passed=$((passed + 1))
+else
+    printf "FAIL  custom default branch resolved\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── config: protected_branches trims whitespace ───────────────────────────────
+printf "\nconfig: protected_branches whitespace\n"
+D="$WORK/stale-trim"; mkmain "$D"
+git -C "$D" checkout -q -b release
+git -C "$D" commit -q --allow-empty -m "release work"
+git -C "$D" checkout -q main
+git -C "$D" merge -q --no-ff release -m "merge"
+# Note the leading space — should still match the branch name "release".
+printf 'protected_branches=develop, release\n' > "$CFG"
+check "trimmed token matches" "No stale branches found" \
+    env GITLS_CONFIG="$CFG" "$GITLS" --no-color stale "$D"
+
+# ── stale --prune --yes: refuses gone+unmerged ────────────────────────────────
+printf "\nstale --prune: refused unmerged\n"
+BARE_U="$WORK/prune-unmerged-bare.git"
+git init --bare -q "$BARE_U"
+D="$WORK/prune-unmerged"
+git clone -q "$BARE_U" "$D" 2>/dev/null
+git -C "$D" config user.email "test@gitls.test"
+git -C "$D" config user.name "Test"
+git -C "$D" commit -q --allow-empty -m "init"
+current=$(git -C "$D" symbolic-ref --short HEAD)
+[ "$current" = "main" ] || git -C "$D" branch -m main
+git -C "$D" push -q origin main
+git -C "$D" checkout -q -b orphan
+git -C "$D" commit -q --allow-empty -m "orphan work"
+git -C "$D" push -q -u origin orphan
+git -C "$D" push -q origin --delete orphan
+git -C "$D" remote prune origin >/dev/null
+git -C "$D" checkout -q main
+out=$("$GITLS" --no-color stale --prune --yes "$D" 2>&1)
+if printf '%s' "$out" | grep -qE "refused.*orphan" &&
+   git -C "$D" rev-parse --verify -q orphan >/dev/null; then
+    printf "  ok  gone+unmerged refused\n"; passed=$((passed + 1))
+else
+    printf "FAIL  gone+unmerged refused\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
 # ── cleanup ───────────────────────────────────────────────────────────────────
 rm -rf "$WORK"
 printf "\n%d passed, %d failed\n" "$passed" "$failed"
