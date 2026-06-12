@@ -269,7 +269,9 @@ static void print_footer(const char *abs_dir, int interval_sec, const char *note
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET));
-    printf("  %sinterval %ds · %s", C(COL_DIM), interval_sec, abs_dir);
+    int tw = term_width();
+    const char *dir = (tw > 0) ? ellipsize(abs_dir, tw - 18) : abs_dir;
+    printf("  %sinterval %ds · %s", C(COL_DIM), interval_sec, dir);
     if (note && note[0])
         printf(" · %s", note);
     printf("%s\n", C(COL_RESET));
@@ -306,25 +308,43 @@ void run_watch(const char *abs_dir) {
             opt_switch_branch[sizeof(opt_switch_branch) - 1] = '\0';
         }
 
-        /* network/switch actions can take a moment — show immediate feedback */
+        /* network/switch actions can take a moment — animate a spinner with the
+         * action verb while the (silent, in watch mode) scan runs */
+        char spinmsg[PATH_MAX + 96];
+        bool spinning = false;
         if (action) {
             const char *verb = action == 'f' ? "Fetching"
                              : action == 'p' ? "Pulling"
                              :                 "Switching";
-            printf(CURSOR_HOME "%sScanned:%s %s\n\n  %s%s…%s\n" CLEAR_TO_END,
-                   C(COL_BOLD), C(COL_RESET), abs_dir,
-                   C(COL_DIM), verb, C(COL_RESET));
+            int tw = term_width();
+            printf(CURSOR_HOME "%sScanned:%s %s\n\n" CLEAR_TO_END,
+                   C(COL_BOLD), C(COL_RESET),
+                   tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir);
+            printf("  %s%s…%s", C(COL_DIM), verb, C(COL_RESET));  /* no-color fallback */
             fflush(stdout);
+
+            if (action == 's')
+                snprintf(spinmsg, sizeof(spinmsg), "%s%s%s to %s%s%s",
+                         C(COL_BOLD), verb, C(COL_RESET),
+                         C(COL_CYAN), branch, C(COL_RESET));
+            else
+                snprintf(spinmsg, sizeof(spinmsg), "%s%s%s all repos",
+                         C(COL_BOLD), verb, C(COL_RESET));
+            spinner_start(spinmsg);   /* overwrites the fallback line via '\r' */
+            spinning = true;
         }
 
         find_repos(abs_dir, 0);
         process_all_repos(abs_dir);
+        if (spinning) spinner_stop();
 
         ColWidths w = compute_col_widths();
 
         /* redraw in place: home, draw, then clear any leftover rows below */
+        int tw = term_width();
         printf(CURSOR_HOME);
-        printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
+        printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET),
+               tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir);
         print_status_table(&w, opt_dirty_only);
         print_footer(abs_dir, opt_watch_interval, note);
         printf(CLEAR_TO_END);
