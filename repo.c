@@ -65,6 +65,23 @@ void collect_path(const char *path) {
 Repo  *g_repos     = NULL;
 size_t g_repo_count = 0;
 
+/*
+ * Free the collected paths and repo array, resetting all counters so the
+ * scan can be repeated (used by the watch loop between refreshes).
+ */
+void free_repo_collection(void) {
+    for (size_t i = 0; i < g_path_count; i++)
+        free(g_paths[i]);
+    free(g_paths);
+    g_paths      = NULL;
+    g_path_count = 0;
+    g_path_cap   = 0;
+
+    free(g_repos);
+    g_repos      = NULL;
+    g_repo_count = 0;
+}
+
 /* ── Branch ────────────────────────────────────────────────────────────────── */
 static void fill_branch(Repo *r, git_repository *repo) {
     if (git_repository_head_unborn(repo) == 1) {

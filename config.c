@@ -106,6 +106,15 @@ void load_config(void) {
             opt_extra_skip_count = idx;
             free(copy);
 
+        } else if (strcmp(key, "watch_interval") == 0) {
+            char *end;
+            int iv = (int)strtol(val, &end, 10);
+            if (*end == '\0' && iv >= 1) opt_watch_interval = iv;
+
+        } else if (strcmp(key, "dirty_only") == 0) {
+            if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
+                opt_dirty_only = true;
+
         } else if (strcmp(key, "no_color") == 0) {
             if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
                 opt_no_color = true;

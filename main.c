@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include <git2.h>
 #include "gitools.h"
@@ -21,6 +22,9 @@ bool   opt_switch             = false;
 char   opt_switch_branch[256] = "";
 bool   opt_fetch              = false;
 bool   opt_pull               = false;
+bool   opt_watch              = false;
+int    opt_watch_interval     = 3;
+bool   opt_dirty_only         = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
@@ -33,6 +37,14 @@ static int git_installed(void) {
     int found = (fread(buf, 1, 1, f) > 0);
     pclose(f);
     return found;
+}
+
+/* ── Helpers ───────────────────────────────────────────────────────────────── */
+static bool is_all_digits(const char *s) {
+    if (!s || !*s) return false;
+    for (const char *p = s; *p; p++)
+        if (*p < '0' || *p > '9') return false;
+    return true;
 }
 
 /* ── Usage ─────────────────────────────────────────────────────────────────── */
@@ -50,6 +62,8 @@ static void usage(const char *prog) {
         "Options:\n"
         "  -s <branch>  Switch all clean repos to <branch> if it exists\n"
         "  -d <n>       Max search depth (default: 5)\n"
+        "  -w [n]       Watch mode: refresh the table every n seconds (default: 3)\n"
+        "  --dirty      Only list repos that are not clean and in sync\n"
         "  -a           Include hidden directories\n"
         "  -v           Verbose: show all repos in summaries, not just changed ones\n"
         "  --no-color   Disable ANSI colours\n"
@@ -60,6 +74,8 @@ static void usage(const char *prog) {
         "  default_dir=~/projects\n"
         "  max_depth=3\n"
         "  skip_dirs=build,dist,tmp\n"
+        "  watch_interval=5\n"
+        "  dirty_only=true\n"
         "  no_color=true\n",
         prog);
 }
@@ -117,6 +133,21 @@ int main(int argc, char **argv) {
                 return 1;
             }
             opt_max_depth = (int)depth;
+        } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--watch") == 0) {
+            opt_watch = true;
+            /* optional numeric interval immediately following -w */
+            if (i + 1 < argc && is_all_digits(argv[i + 1])) {
+                char *end;
+                errno = 0;
+                long iv = strtol(argv[++i], &end, 10);
+                if (*end != '\0' || errno == ERANGE || iv < 1 || iv > INT_MAX) {
+                    fprintf(stderr, "Error: -w requires a positive number of seconds\n");
+                    return 1;
+                }
+                opt_watch_interval = (int)iv;
+            }
+        } else if (strcmp(argv[i], "--dirty") == 0) {
+            opt_dirty_only = true;
         } else if (strcmp(argv[i], "-s") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -s requires a branch name\n"); return 1; }
             opt_switch = true;
@@ -135,6 +166,14 @@ int main(int argc, char **argv) {
     /* 4. validate subcommand/flag combinations */
     if (opt_pull && opt_switch) {
         fprintf(stderr, "Error: 'pull' and '-s' cannot be combined\n");
+        return 1;
+    }
+    if (opt_watch && (opt_fetch || opt_pull || opt_switch)) {
+        fprintf(stderr, "Error: -w cannot be combined with fetch/pull/-s\n");
+        return 1;
+    }
+    if (opt_watch && !isatty(STDOUT_FILENO)) {
+        fprintf(stderr, "Error: -w requires an interactive terminal\n");
         return 1;
     }
 
@@ -175,7 +214,20 @@ int main(int argc, char **argv) {
     if (opt_fetch || opt_pull)
         resolve_git_path();
 
-    /* 7. spinner — Phase 1 always shows "Scanning:" (local queries only).
+    /* 7. watch mode runs its own render loop (alternate screen, no spinner)
+     *    and only returns once the user quits. */
+    if (opt_watch) {
+        run_watch(abs_dir);
+        if (opt_extra_skip) {
+            for (size_t i = 0; i < opt_extra_skip_count; i++)
+                free(opt_extra_skip[i]);
+            free(opt_extra_skip);
+        }
+        git_libgit2_shutdown();
+        return 0;
+    }
+
+    /* 8. spinner — Phase 1 always shows "Scanning:" (local queries only).
      *    fetch/pull get a second spinner in process_all_repos() once repos
      *    are found.  Switch-only uses "Switching:" since that happens in Phase 1. */
     const char *verb = (opt_switch && !opt_fetch && !opt_pull) ? "Switching:"
@@ -198,29 +250,7 @@ int main(int argc, char **argv) {
     if (opt_pull)  print_pull_summary(&w);
     if (opt_switch) print_switch_summary(&w);
 
-    print_header(&w);
-
-    int total = 0, clean = 0, dirty = 0, behind = 0;
-    for (size_t i = 0; i < g_repo_count; i++) {
-        const Repo *r = &g_repos[i];
-        print_repo(r, &w);
-        total++;
-        if (r->staged || r->modified || r->untracked) dirty++; else clean++;
-        if (r->behind > 0) behind++;
-    }
-
-    print_separator(&w);
-    if (total == 0) {
-        printf("  No git repositories found.\n");
-    } else {
-        printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
-            C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
-            C(COL_GREEN), clean,  C(COL_RESET),
-            C(COL_RED),   dirty,  C(COL_RESET));
-        if (behind > 0)
-            printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
-        printf("\n");
-    }
+    print_status_table(&w, opt_dirty_only);
 
     /* cleanup */
     for (size_t i = 0; i < g_path_count; i++)
