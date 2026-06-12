@@ -196,6 +196,55 @@ void print_repo(const Repo *r, const ColWidths *w) {
     printf("\n");
 }
 
+/* ── Dirty filter ──────────────────────────────────────────────────────────── */
+/*
+ * A repo is "dirty" (worth showing under --dirty) when it is not both clean
+ * and in sync: any staged/modified/untracked files, any ahead/behind commits,
+ * or a detached / unborn HEAD (branch rendered as "(...)").
+ */
+bool repo_is_dirty(const Repo *r) {
+    if (r->staged || r->modified || r->untracked) return true;
+    if (r->ahead || r->behind)                    return true;
+    if (r->branch[0] == '(')                      return true;
+    return false;
+}
+
+/* ── Status table ──────────────────────────────────────────────────────────── */
+/*
+ * Print the header, one row per repo and the trailing summary line.
+ * When dirty_only is set, clean+in-sync repos are hidden from the listing but
+ * still counted in the summary, which appends "(N hidden)".
+ */
+void print_status_table(const ColWidths *w, bool dirty_only) {
+    print_header(w);
+
+    int total = 0, clean = 0, dirty = 0, behind = 0, hidden = 0;
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        total++;
+        if (r->staged || r->modified || r->untracked) dirty++; else clean++;
+        if (r->behind > 0) behind++;
+
+        if (dirty_only && !repo_is_dirty(r)) { hidden++; continue; }
+        print_repo(r, w);
+    }
+
+    print_separator(w);
+    if (total == 0) {
+        printf("  No git repositories found.\n");
+    } else {
+        printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
+            C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
+            C(COL_GREEN), clean,  C(COL_RESET),
+            C(COL_RED),   dirty,  C(COL_RESET));
+        if (behind > 0)
+            printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
+        if (hidden > 0)
+            printf(" %s(%d hidden)%s", C(COL_DIM), hidden, C(COL_RESET));
+        printf("\n");
+    }
+}
+
 /* ── Switch summary ────────────────────────────────────────────────────────── */
 void print_switch_summary(const ColWidths *w) {
     int switched = 0, created = 0, already = 0, not_found = 0, skipped = 0;
