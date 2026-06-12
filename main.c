@@ -247,7 +247,9 @@ int main(int argc, char **argv) {
     ColWidths w = compute_col_widths();
 
     /* ── status table header ── */
-    printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
+    int tw = term_width();
+    printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET),
+           tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir);
 
     if (opt_fetch) print_fetch_summary(&w);
     if (opt_pull)  print_pull_summary(&w);

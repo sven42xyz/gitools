@@ -119,6 +119,8 @@ void free_recent_branches(void);
 
 /* display.c */
 const char *C(const char *color);
+int         term_width(void);
+const char *ellipsize(const char *s, int max_w);
 int         utf8_width(const char *s);
 const char *relative_time(git_time_t t);
 void        write_col(const char *s, int width);

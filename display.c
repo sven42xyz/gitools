@@ -3,14 +3,51 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <stdatomic.h>
 #include <pthread.h>
 
 #include "gitools.h"
+
+/* Terminal width in columns, or 0 when unknown (e.g. output is piped — then
+ * the table is printed at full width so scripts get complete data). */
+int term_width(void) {
+    struct winsize ws;
+    if (isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0
+            && ws.ws_col > 0)
+        return ws.ws_col;
+    const char *cols = getenv("COLUMNS");
+    if (cols) { int v = atoi(cols); if (v > 0) return v; }
+    return 0;
+}
+
+/* Truncate s to at most max_w display columns. For paths the tail is the most
+ * useful part, so the front is dropped and replaced with a leading ellipsis.
+ * Returns a pointer to a rotating static buffer. */
+const char *ellipsize(const char *s, int max_w) {
+    static char buf[PATH_MAX + 8];
+    int w = utf8_width(s);
+    if (max_w < 2 || w <= max_w) {
+        snprintf(buf, sizeof(buf), "%s", s);
+        return buf;
+    }
+    int drop = w - (max_w - 1);          /* reserve 1 column for the ellipsis */
+    const unsigned char *p = (const unsigned char *)s;
+    int skipped = 0;
+    while (*p && skipped < drop) {
+        int seqlen = *p < 0x80 ? 1 : *p < 0xE0 ? 2 : *p < 0xF0 ? 3 : 4;
+        for (int j = 1; j < seqlen; j++) if (p[j] == '\0') { seqlen = j; break; }
+        p += seqlen;
+        skipped++;
+    }
+    snprintf(buf, sizeof(buf), "\xe2\x80\xa6%s", (const char *)p);   /* … + tail */
+    return buf;
+}
 
 /* ── Colour helper ─────────────────────────────────────────────────────────── */
 const char *C(const char *color) {
@@ -138,6 +175,24 @@ ColWidths compute_col_widths(void) {
         w.sync = MAX(w.sync, utf8_width(sync_buf));
 
         w.time = MAX(w.time, utf8_width(relative_time(r->last_commit)));
+    }
+
+    /* Cap the variable NAME / BRANCH columns so a single row never exceeds the
+     * terminal width and wraps (which would corrupt the table, and the in-place
+     * redraw in watch mode). write_col() truncates over-long content with '~'.
+     * The layout is: 2(lead) + name +2 + branch +2 + sync +2 + time +2 + STATUS. */
+    int tw = term_width();
+    if (tw > 0) {
+        const int status_reserve = 14;   /* room for e.g. ●9 ✗9 ?9 */
+        int other = 2 + 2 + 2 + 2 + 2 + w.sync + w.time + status_reserve;
+        int avail = tw - other;          /* budget shared by NAME + BRANCH */
+        if (avail < 10) avail = 10;
+        while (w.name + w.branch > avail) {
+            if (w.branch > 6 && w.branch >= w.name) w.branch--;
+            else if (w.name > 4)                    w.name--;
+            else if (w.branch > 6)                  w.branch--;
+            else break;                  /* at minimums (NAME 4 / BRANCH 6) */
+        }
     }
     return w;
 }
