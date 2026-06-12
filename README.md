@@ -12,6 +12,8 @@ A fast, minimal tool to inspect and act on multiple git repositories.
 - **Fetch** all repos from their remote (`fetch`)
 - **Pull** (fast-forward only) all clean repos (`pull`)
 - **Branch switching** across all clean repos (`-s`)
+- **Watch mode** — live, in-place refreshing status table (`-w`)
+- **Dirty filter** — show only repos needing attention (`--dirty`)
 - Recursive directory scan with configurable depth
 - Branch name (incl. detached HEAD as short SHA)
 - Staged / modified / untracked file counts
@@ -66,6 +68,8 @@ Subcommands:
 Options:
   -s <branch>  Switch all clean repos to <branch> if it exists
   -d <n>       Max search depth (default: 5)
+  -w [n]       Watch mode: refresh the table every n seconds (default: 3)
+  --dirty      Only list repos that are not clean and in sync
   -a           Include hidden directories
   -v           Verbose: show all repos in summaries, not just changed ones
   --no-color   Disable ANSI colours
@@ -87,6 +91,15 @@ gitls fetch ~/projects
 
 # Pull (fast-forward) all clean repos
 gitls pull ~/projects
+
+# Watch ~/projects, refreshing every 3 seconds
+gitls -w ~/projects
+
+# Watch with a 10-second interval, only showing repos that need attention
+gitls -w 10 --dirty ~/projects
+
+# Show only repos that are not clean and in sync
+gitls --dirty ~/projects
 
 # Switch all clean repos to main
 gitls -s main ~/projects
@@ -139,6 +152,63 @@ Pull results:
 - Repos without a remote are listed but skipped
 
 By default, only pulled repos and errors are shown per line. Add `-v` to see all repos including up-to-date and no-remote ones.
+
+## Watch mode
+
+`gitls -w` keeps the status table on screen and refreshes it in place at a
+fixed interval (3 seconds by default). It is handy for keeping an eye on a tree
+of repos while you work in another window.
+
+```sh
+gitls -w            # refresh every 3 seconds
+gitls -w 10         # refresh every 10 seconds
+gitls -w --dirty    # only show repos that need attention, live
+```
+
+```
+Scanned: /home/me/projects
+
+  NAME            BRANCH     SYNC  WHEN         STATUS
+  ──────────────────────────────────────────────────────
+  api-server      main       ↓2    3 min ago    ✓
+  frontend        main       ≡     12 min ago   ✗1
+  auth-service    feature-x  ↑1    1 hour ago   ●2
+
+  3 repos · 1 clean · 1 dirty · 1 behind
+
+  interval 3s · last scan 14:23:01 · q to quit
+```
+
+- Uses the **alternate screen buffer**, so your scrollback is left untouched —
+  the table is redrawn in place rather than scrolling past.
+- Press **`q`** (or **Ctrl-C**) to quit. The terminal is always restored on
+  exit, including on `SIGINT` / `SIGTERM`: the alternate screen is left, the
+  cursor is shown again and terminal settings are reset.
+- No `ncurses` dependency — only raw ANSI escapes and `termios`.
+- Reuses the same parallel scan as the one-shot mode, so refreshes are fast.
+- Requires an interactive terminal; piping the output is rejected.
+- Cannot be combined with `fetch`, `pull` or `-s` (status display only).
+
+## Dirty filter
+
+`--dirty` lists only the repos that are **not** both clean and in sync —
+anything with staged, modified or untracked files, commits ahead/behind the
+remote, a diverged branch, or a detached `HEAD`. Clean, in-sync repos are
+hidden from the listing.
+
+```
+gitls --dirty ~/projects
+
+  NAME            BRANCH     SYNC  WHEN         STATUS
+  ──────────────────────────────────────────────────────
+  frontend        main       ↓2    12 min ago   ✗1
+  auth-service    feature-x  ↑1    1 hour ago   ●2
+
+  9 repos · 6 clean · 3 dirty · 1 behind (7 hidden)
+```
+
+The summary line still reflects **all** scanned repos and appends `(N hidden)`
+so the totals stay honest. The filter works in one-shot mode and under `-w`.
 
 ## Branch switching
 
@@ -207,6 +277,8 @@ Or create `~/.gitlsrc` manually:
 default_dir=~/projects
 max_depth=3
 skip_dirs=build,dist,tmp,*.egg-info
+watch_interval=5
+dirty_only=false
 no_color=false
 ```
 
@@ -215,6 +287,8 @@ no_color=false
 | `default_dir` | Directory to scan when none is given on CLI | `.` (current dir) |
 | `max_depth` | Maximum directory recursion depth | `5` |
 | `skip_dirs` | Comma-separated list of directory names to skip (glob patterns supported) | — |
+| `watch_interval` | Default refresh interval (seconds) for `-w` | `3` |
+| `dirty_only` | Set to `true` or `1` to filter to dirty repos by default (like `--dirty`) | `false` |
 | `no_color` | Set to `true` or `1` to disable colors | `false` |
 
 CLI flags always override the config file. Passing an explicit directory (including `.`) always overrides `default_dir`:

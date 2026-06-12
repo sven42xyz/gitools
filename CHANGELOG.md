@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `gitls -w` / `--watch` — watch mode: refreshes the status table in place at a
+  configurable interval (default 3 s, e.g. `-w 10`). Uses the alternate screen
+  buffer so scrollback is left untouched, hides the cursor, and quits on `q` or
+  Ctrl-C. The terminal is always restored on exit, including on `SIGINT` /
+  `SIGTERM`. No `ncurses` dependency — raw ANSI escapes and `termios` only.
+- `gitls --dirty` — list only repos that are not clean and in sync (staged /
+  modified / untracked files, ahead/behind, diverged or detached `HEAD`). The
+  summary line still counts all scanned repos and appends `(N hidden)`. Works in
+  one-shot mode and under `-w`.
+- `~/.gitlsrc` keys `watch_interval` and `dirty_only`; CLI flags override them.
+
 ## [0.3.1] – 2026-03-08
 
 ### Fixed

@@ -14,5 +14,11 @@
 # Glob patterns are supported: *, ?, [abc]
 # skip_dirs=build,dist,tmp,node_modules,*.egg-info
 
+# Default refresh interval (in seconds) for watch mode (-w). Default: 3
+# watch_interval=5
+
+# Only list repos that are not clean and in sync (like the --dirty flag).
+# dirty_only=true
+
 # Disable ANSI colors (true or 1)
 # no_color=false
