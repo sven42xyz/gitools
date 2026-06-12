@@ -20,6 +20,17 @@ All notable changes to this project will be documented in this file.
   one-shot mode and under `-w`.
 - `~/.gitlsrc` keys `watch_interval` and `dirty_only`; CLI flags override them.
 
+### Fixed
+- Long branch names (or any over-wide row) no longer wrap and corrupt the table:
+  the NAME / BRANCH columns are now capped to the terminal width (content is
+  truncated with `~`). Affects both the one-shot table and watch mode. Piped
+  output is still emitted at full width. Over-long `Scanned:` / footer paths are
+  shortened with a leading `…`.
+
+### Changed
+- Watch mode now animates a spinner with the action verb (Fetching / Pulling /
+  Switching) while a fetch / pull / switch runs, instead of a static line.
+
 ## [0.3.1] – 2026-03-08
 
 ### Fixed
