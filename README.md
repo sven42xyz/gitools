@@ -186,15 +186,32 @@ While watching you can act on every repo without leaving the view:
 |-----|--------|
 | `f` | Fetch all repos from `origin` |
 | `p` | Fast-forward pull all clean repos |
-| `s` | Prompt for a branch name, then switch all clean repos to it |
+| `s` | Open the branch picker, then switch all clean repos to the chosen branch |
 | `r` | Refresh now (don't wait for the interval) |
 | `q` / Ctrl-C | Quit |
 
 The action runs against the whole tree, the table refreshes immediately to show
-the result, and the footer notes the last action performed. The `s` prompt
-accepts Backspace and is cancelled with `Esc`. These are the same operations as
-the `fetch` / `pull` / `-s` commands — including creating a local tracking
-branch when switching to a branch that only exists on `origin`.
+the result, and the footer notes the last action performed. These are the same
+operations as the `fetch` / `pull` / `-s` commands — including creating a local
+tracking branch when switching to a branch that only exists on `origin`.
+
+Pressing `s` opens an interactive picker listing the **recently active
+branches** across all scanned repos, most recent first:
+
+```
+  Switch all clean repos to a branch
+
+  branch: dev▏
+  ↑/↓ navigate · Tab/Enter select · Esc cancel
+
+  ❱ develop
+    hotfix
+```
+
+- Type to filter the list; **↑/↓** move the selection.
+- **Tab** or **Enter** choose the highlighted branch (Enter also accepts a
+  typed name that matches nothing, e.g. to create a new local tracking branch).
+- **Backspace** edits, **Esc** / Ctrl-C cancels.
 
 - Uses the **alternate screen buffer**, so your scrollback is left untouched —
   the table is redrawn in place rather than scrolling past.

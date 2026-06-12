@@ -11,7 +11,9 @@ All notable changes to this project will be documented in this file.
   Ctrl-C. The terminal is always restored on exit, including on `SIGINT` /
   `SIGTERM`. No `ncurses` dependency — raw ANSI escapes and `termios` only.
   Interactive keys act on the whole tree without leaving the view: `f` fetch,
-  `p` pull, `s` switch (prompts for a branch name), `r` refresh now.
+  `p` pull, `s` switch, `r` refresh now. The `s` key opens a branch picker that
+  lists recently active branches (most recent first) with type-to-filter, ↑/↓
+  navigation and Tab/Enter selection.
 - `gitls --dirty` — list only repos that are not clean and in sync (staged /
   modified / untracked files, ahead/behind, diverged or detached `HEAD`). The
   summary line still counts all scanned repos and appends `(N hidden)`. Works in
