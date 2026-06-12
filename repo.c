@@ -25,6 +25,11 @@ static char g_git_path[PATH_MAX] = "";
  * run_git_capture can use execve(g_git_path) instead of execvp("git").
  * execve is a direct syscall (async-signal-safe); execvp calls getenv+malloc.
  */
+/* True once resolve_git_path() has found a usable git binary. */
+int git_available(void) {
+    return g_git_path[0] != '\0';
+}
+
 void resolve_git_path(void) {
     const char *path_env = getenv("PATH");
     if (!path_env) return;
@@ -554,19 +559,24 @@ void process_all_repos(const char *dir) {
      * The Phase 2 spinner uses write() (async-signal-safe) so it can run safely
      * alongside the fork() calls in net_worker_thread. */
     if (opt_fetch || opt_pull) {
-        spinner_stop();
-        printf("  Found %zu repo%s\n", g_path_count,
-               g_path_count == 1 ? "" : "s");
-        fflush(stdout);
+        /* watch mode renders on the alternate screen and shows its own
+         * progress, so the inter-phase line and spinner are suppressed there */
+        if (!opt_watch) {
+            spinner_stop();
+            printf("  Found %zu repo%s\n", g_path_count,
+                   g_path_count == 1 ? "" : "s");
+            fflush(stdout);
 
-        const char *verb = opt_fetch ? "Fetching:" : "Pulling:";
-        char phase2[PATH_MAX + 64];
-        snprintf(phase2, sizeof(phase2), "%s%s%s %s",
-                 C(COL_BOLD), verb, C(COL_RESET), dir);
-        spinner_start(phase2);
+            const char *verb = opt_fetch ? "Fetching:" : "Pulling:";
+            char phase2[PATH_MAX + 64];
+            snprintf(phase2, sizeof(phase2), "%s%s%s %s",
+                     C(COL_BOLD), verb, C(COL_RESET), dir);
+            spinner_start(phase2);
+        }
 
         atomic_store(&net_idx, 0);
         run_thread_pool(nthreads, net_worker_thread);
-        spinner_stop();
+
+        if (!opt_watch) spinner_stop();
     }
 }

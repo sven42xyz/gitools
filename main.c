@@ -215,8 +215,11 @@ int main(int argc, char **argv) {
         resolve_git_path();
 
     /* 7. watch mode runs its own render loop (alternate screen, no spinner)
-     *    and only returns once the user quits. */
+     *    and only returns once the user quits. Resolve the git binary so the
+     *    interactive fetch/pull keys work; status display works without it. */
     if (opt_watch) {
+        if (git_installed())
+            resolve_git_path();
         run_watch(abs_dir);
         if (opt_extra_skip) {
             for (size_t i = 0; i < opt_extra_skip_count; i++)

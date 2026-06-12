@@ -108,6 +108,7 @@ void load_config(void);
 
 /* repo.c */
 void resolve_git_path(void);
+int  git_available(void);
 void collect_path(const char *path);
 void process_all_repos(const char *dir);
 void free_repo_collection(void);
