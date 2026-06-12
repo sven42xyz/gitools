@@ -177,7 +177,7 @@ Scanned: /home/me/projects
   3 repos · 1 clean · 1 dirty · 1 behind
 
   f fetch · p pull · s switch · r refresh · q quit
-  interval 3s · last scan 14:23:01 · switched to main
+  interval 3s · /home/me/projects · switched to main
 ```
 
 While watching you can act on every repo without leaving the view:
@@ -199,14 +199,18 @@ Pressing `s` opens an interactive picker listing the **recently active
 branches** across all scanned repos, most recent first:
 
 ```
-  Switch all clean repos to a branch
+  ... status table ...
 
-  branch: dev▏
+  f fetch · p pull · s switch · r refresh · q quit
+  interval 3s · /home/me/projects
+
+  switch all clean repos to: dev▏
   ↑/↓ navigate · Tab/Enter select · Esc cancel
-
   ❱ develop
     hotfix
 ```
+
+The picker is drawn in place below the table.
 
 - Type to filter the list; **↑/↓** move the selection.
 - **Tab** or **Enter** choose the highlighted branch (Enter also accepts a
