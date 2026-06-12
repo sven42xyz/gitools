@@ -119,6 +119,7 @@ void free_recent_branches(void);
 
 /* display.c */
 const char *C(const char *color);
+const char *EOL(void);
 int         term_width(void);
 const char *ellipsize(const char *s, int max_w);
 int         utf8_width(const char *s);

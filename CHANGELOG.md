@@ -27,6 +27,11 @@ All notable changes to this project will be documented in this file.
   output is still emitted at full width. Over-long `Scanned:` / footer paths are
   shortened with a leading `…`.
 
+- Watch mode no longer corrupted the table when a refresh produced a narrower
+  frame (e.g. switching to a shorter branch name) — each rewritten line is now
+  cleared to its end, so no stale columns (a duplicate WHEN/STATUS) are left
+  behind. The table also stays on screen while an action runs.
+
 ### Changed
 - Watch mode now animates a spinner with the action verb (Fetching / Pulling /
   Switching) while a fetch / pull / switch runs, instead of a static line.

@@ -265,16 +265,17 @@ static bool read_branch(char *out, size_t n) {
 
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
 static void print_footer(const char *abs_dir, int interval_sec, const char *note) {
-    printf("\n  %sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit\n",
+    printf("%s\n", EOL());   /* blank separator line (cleared) */
+    printf("  %sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit%s\n",
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
-           C(COL_BOLD), C(COL_RESET));
+           C(COL_BOLD), C(COL_RESET), EOL());
     int tw = term_width();
     const char *dir = (tw > 0) ? ellipsize(abs_dir, tw - 18) : abs_dir;
     printf("  %sinterval %ds · %s", C(COL_DIM), interval_sec, dir);
     if (note && note[0])
         printf(" · %s", note);
-    printf("%s\n", C(COL_RESET));
+    printf("%s%s\n", C(COL_RESET), EOL());
 }
 
 /* ── Public entry point ────────────────────────────────────────────────────── */
@@ -339,11 +340,12 @@ void run_watch(const char *abs_dir) {
 
         ColWidths w = compute_col_widths();
 
-        /* redraw in place: home, draw, then clear any leftover rows below */
+        /* redraw in place: home, draw (each line cleared to its end via EOL so
+         * a narrower frame leaves no stale columns), then clear leftover rows */
         int tw = term_width();
         printf(CURSOR_HOME);
-        printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET),
-               tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir);
+        printf("%sScanned:%s %s%s\n%s\n", C(COL_BOLD), C(COL_RESET),
+               tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir, EOL(), EOL());
         print_status_table(&w, opt_dirty_only);
         print_footer(abs_dir, opt_watch_interval, note);
         printf(CLEAR_TO_END);

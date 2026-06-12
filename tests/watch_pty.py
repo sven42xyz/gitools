@@ -22,6 +22,82 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GITLS = os.path.join(ROOT, "gitls")
 
+
+class Term:
+    """Tiny VT100-ish screen emulator — enough to render gitls watch frames and
+    catch redraw artifacts (cursor moves, erase-line/display, CR/LF)."""
+
+    def __init__(self, rows=48, cols=120):
+        self.rows, self.cols = rows, cols
+        self.grid = [[" "] * cols for _ in range(rows)]
+        self.r = self.c = 0
+
+    def _clamp(self):
+        self.r = max(0, min(self.r, self.rows - 1))
+        self.c = max(0, min(self.c, self.cols - 1))
+
+    def feed(self, data):
+        i, n = 0, len(data)
+        while i < n:
+            ch = data[i]
+            if ch == "\x1b" and i + 1 < n and data[i + 1] == "[":
+                j = i + 2
+                if j < n and data[j] == "?":          # private mode — skip
+                    j += 1
+                    while j < n and data[j] not in "hl":
+                        j += 1
+                    i = j + 1
+                    continue
+                params = ""
+                while j < n and (data[j].isdigit() or data[j] == ";"):
+                    params += data[j]
+                    j += 1
+                if j >= n:
+                    break
+                letter = data[j]
+                i = j + 1
+                nums = [int(x) for x in params.split(";") if x != ""]
+                if letter == "H":
+                    self.r = (nums[0] - 1) if len(nums) >= 1 else 0
+                    self.c = (nums[1] - 1) if len(nums) >= 2 else 0
+                    self._clamp()
+                elif letter == "A":
+                    self.r -= nums[0] if nums else 1; self._clamp()
+                elif letter == "B":
+                    self.r += nums[0] if nums else 1; self._clamp()
+                elif letter == "C":
+                    self.c += nums[0] if nums else 1; self._clamp()
+                elif letter == "D":
+                    self.c -= nums[0] if nums else 1; self._clamp()
+                elif letter == "J":
+                    if (nums[0] if nums else 0) == 0:
+                        for cc in range(self.c, self.cols):
+                            self.grid[self.r][cc] = " "
+                        for rr in range(self.r + 1, self.rows):
+                            self.grid[rr] = [" "] * self.cols
+                    elif nums and nums[0] == 2:
+                        self.grid = [[" "] * self.cols for _ in range(self.rows)]
+                elif letter == "K":
+                    if (nums[0] if nums else 0) == 0:
+                        for cc in range(self.c, self.cols):
+                            self.grid[self.r][cc] = " "
+                # ignore SGR (m) and anything else
+                continue
+            if ch == "\r":
+                self.c = 0
+            elif ch == "\n":
+                self.r += 1; self.c = 0; self._clamp()
+            elif ch == "\x1b":
+                pass
+            elif ch >= " ":
+                if self.r < self.rows and self.c < self.cols:
+                    self.grid[self.r][self.c] = ch
+                self.c += 1; self._clamp()
+            i += 1
+
+    def text(self):
+        return "\n".join("".join(row).rstrip() for row in self.grid)
+
 passed = 0
 failed = 0
 
@@ -184,6 +260,29 @@ def main():
     w.finish()
     check("filter 'dev'+Enter switches a to develop", current_branch(a) == "develop")
     check("filter 'dev'+Enter switches b to develop", current_branch(b) == "develop")
+
+    # ── 5. switching to a narrower branch leaves no stale columns ──
+    # (regression: a wider previous frame used to leave a duplicate WHEN/STATUS)
+    wide = tempfile.mkdtemp(prefix="gitls-pty-wide-")
+    long_branch = "feature-with-a-really-long-branch-name"
+    for name in ("ra", "rb"):
+        p = os.path.join(wide, name)
+        make_repo(p)
+        git("checkout", "-q", "-b", long_branch, cwd=p)   # start on the long branch
+    w = Watcher(wide)
+    raw = w.drain(1.2)                     # wide frame
+    w.send(b"s"); w.drain(0.4)
+    w.send(b"main"); w.drain(0.3)
+    w.send(b"\r")                          # switch to main -> narrow branch column
+    raw += w.drain(1.5)
+    w.finish()
+    term = Term()
+    term.feed(raw)
+    screen = term.text()
+    headers = [l for l in screen.splitlines() if "BRANCH" in l and "STATUS" in l]
+    check("narrowing branch leaves no stale columns", long_branch[:12] not in screen)
+    check("exactly one header row after switch", len(headers) == 1)
+    subprocess.run(["rm", "-rf", wide])
 
     subprocess.run(["rm", "-rf", work])
     print(f"\n{passed} passed, {failed} failed")

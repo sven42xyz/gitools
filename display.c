@@ -54,6 +54,14 @@ const char *C(const char *color) {
     return opt_no_color ? "" : color;
 }
 
+/* Erase-to-end-of-line marker emitted at the end of every rewritten line in
+ * watch mode, so a narrower frame doesn't leave stale characters (e.g. a second
+ * WHEN/STATUS column) from the previous, wider one. Empty outside watch mode so
+ * piped output stays clean. */
+const char *EOL(void) {
+    return opt_watch ? "\033[K" : "";
+}
+
 /* ── Relative time ─────────────────────────────────────────────────────────── */
 const char *relative_time(git_time_t t) {
     static char buf[64];
@@ -203,19 +211,19 @@ void print_separator(const ColWidths *w) {
                 + (int)strlen("STATUS");
     printf("  %s", C(COL_DIM));
     for (int i = 0; i < total; i++) printf("─");
-    printf("%s\n", C(COL_RESET));
+    printf("%s%s\n", C(COL_RESET), EOL());
 }
 
 /* ── Table header ──────────────────────────────────────────────────────────── */
 void print_header(const ColWidths *w) {
-    printf("  %s%-*s  %-*s  %-*s  %-*s  %s%s\n",
+    printf("  %s%-*s  %-*s  %-*s  %-*s  %s%s%s\n",
         C(COL_DIM),
         w->name,   "NAME",
         w->branch, "BRANCH",
         w->sync,   "SYNC",
         w->time,   "WHEN",
         "STATUS",
-        C(COL_RESET));
+        C(COL_RESET), EOL());
     print_separator(w);
 }
 
@@ -248,7 +256,7 @@ void print_repo(const Repo *r, const ColWidths *w) {
         if (r->modified)  printf("%s✗%d%s ", C(COL_RED),     r->modified,  C(COL_RESET));
         if (r->untracked) printf("%s?%d%s",  C(COL_MAGENTA), r->untracked, C(COL_RESET));
     }
-    printf("\n");
+    printf("%s\n", EOL());
 }
 
 /* ── Dirty filter ──────────────────────────────────────────────────────────── */
@@ -286,7 +294,7 @@ void print_status_table(const ColWidths *w, bool dirty_only) {
 
     print_separator(w);
     if (total == 0) {
-        printf("  No git repositories found.\n");
+        printf("  No git repositories found.%s\n", EOL());
     } else {
         printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
             C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
@@ -296,7 +304,7 @@ void print_status_table(const ColWidths *w, bool dirty_only) {
             printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
         if (hidden > 0)
             printf(" %s(%d hidden)%s", C(COL_DIM), hidden, C(COL_RESET));
-        printf("\n");
+        printf("%s\n", EOL());
     }
 }
 
