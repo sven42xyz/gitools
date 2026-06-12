@@ -160,29 +160,35 @@ static bool ci_contains(const char *hay, const char *needle) {
     return false;
 }
 
-static void draw_picker(const char *buf, const char **filt, size_t nfilt,
-                        size_t sel, size_t off) {
-    printf(CURSOR_HOME CLEAR_TO_END);
-    printf("  %sSwitch all clean repos to a branch%s\n\n",
-           C(COL_BOLD), C(COL_RESET));
-    printf("  branch: %s%s%s\xe2\x96\x8f\n", C(COL_CYAN), buf, C(COL_RESET));
+/* Draw the picker block at the current cursor position; return the number of
+ * lines printed so the caller can move the cursor back to the anchor. */
+static int draw_picker(const char *buf, const char **filt, size_t nfilt,
+                       size_t sel, size_t off) {
+    int lines = 0;
+    printf("\n");                                                          lines++;
+    printf("  %sswitch all clean repos to:%s %s%s%s\xe2\x96\x8f\n",
+           C(COL_BOLD), C(COL_RESET), C(COL_CYAN), buf, C(COL_RESET));     lines++;
     printf("  %s\xe2\x86\x91/\xe2\x86\x93 navigate \xc2\xb7 Tab/Enter select \xc2\xb7 "
-           "Esc cancel%s\n\n", C(COL_DIM), C(COL_RESET));
+           "Esc cancel%s\n", C(COL_DIM), C(COL_RESET));                    lines++;
 
     if (nfilt == 0) {
-        printf("  %s(no matching branches \xe2\x80\x94 type a name and press Enter)%s\n",
-               C(COL_DIM), C(COL_RESET));
+        printf("  %s(no matching branches \xe2\x80\x94 type a name, Enter to use it)%s\n",
+               C(COL_DIM), C(COL_RESET));                                  lines++;
     } else {
         for (size_t i = off; i < nfilt && i < off + PICK_VISIBLE; i++) {
             if (i == sel)
                 printf("  %s\xe2\x9d\xb1 %s%s\n", C(COL_GREEN), filt[i], C(COL_RESET));
             else
                 printf("    %s%s%s\n", C(COL_DIM), filt[i], C(COL_RESET));
+            lines++;
         }
-        if (nfilt > PICK_VISIBLE)
-            printf("  %s(%zu more)%s\n", C(COL_DIM), nfilt - PICK_VISIBLE, C(COL_RESET));
+        if (nfilt > off + PICK_VISIBLE) {
+            printf("  %s(%zu more)%s\n",
+                   C(COL_DIM), nfilt - (off + PICK_VISIBLE), C(COL_RESET));
+            lines++;
+        }
     }
-    fflush(stdout);
+    return lines;
 }
 
 /*
@@ -208,7 +214,13 @@ static bool read_branch(char *out, size_t n) {
         if (sel < off)                  off = sel;
         if (sel >= off + PICK_VISIBLE)  off = sel - PICK_VISIBLE + 1;
 
-        draw_picker(buf, filt, nfilt, sel, off);
+        /* redraw in place at the anchor (the line below the footer): clear the
+         * picker region, draw it, then move the cursor back up to the anchor */
+        printf("\r" CLEAR_TO_END);
+        int lines = draw_picker(buf, filt, nfilt, sel, off);
+        if (lines > 0) printf("\033[%dA", lines);
+        printf("\r");
+        fflush(stdout);
 
         if (g_watch_stop) return false;
 
@@ -252,18 +264,12 @@ static bool read_branch(char *out, size_t n) {
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
-static void print_footer(int interval_sec, const char *note) {
-    char clock[16] = "";
-    time_t t = time(NULL);
-    struct tm tmv;
-    if (localtime_r(&t, &tmv))
-        strftime(clock, sizeof(clock), "%H:%M:%S", &tmv);
-
+static void print_footer(const char *abs_dir, int interval_sec, const char *note) {
     printf("\n  %sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit\n",
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET));
-    printf("  %sinterval %ds · last scan %s", C(COL_DIM), interval_sec, clock);
+    printf("  %sinterval %ds · %s", C(COL_DIM), interval_sec, abs_dir);
     if (note && note[0])
         printf(" · %s", note);
     printf("%s\n", C(COL_RESET));
@@ -320,7 +326,7 @@ void run_watch(const char *abs_dir) {
         printf(CURSOR_HOME);
         printf("%sScanned:%s %s\n\n", C(COL_BOLD), C(COL_RESET), abs_dir);
         print_status_table(&w, opt_dirty_only);
-        print_footer(opt_watch_interval, note);
+        print_footer(abs_dir, opt_watch_interval, note);
         printf(CLEAR_TO_END);
         fflush(stdout);
 
