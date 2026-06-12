@@ -4,17 +4,8 @@
 
 A fast, minimal tool to inspect and act on multiple git repositories.
 
-```
-Scanned: /Users/sven/projects
+![gitls demo](docs/demo.gif)
 
-  NAME                          BRANCH                          SYNC     WHEN            STATUS
-  ────────────────────────────────────────────────────────────────────────────────────────────
-  gitools                       main                            ≡        2 days ago      ✓
-  api-server                    feature/auth                    ↑2       5 hours ago     ●2 ✗1
-  frontend                      main                            ↓3       3 days ago      ✓
-  ────────────────────────────────────────────────────────────────────────────────────────────
-  3 repos · 2 clean · 1 dirty
-```
 
 ## Features
 
