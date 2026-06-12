@@ -176,18 +176,35 @@ Scanned: /home/me/projects
 
   3 repos · 1 clean · 1 dirty · 1 behind
 
-  interval 3s · last scan 14:23:01 · q to quit
+  f fetch · p pull · s switch · r refresh · q quit
+  interval 3s · last scan 14:23:01 · switched to main
 ```
+
+While watching you can act on every repo without leaving the view:
+
+| Key | Action |
+|-----|--------|
+| `f` | Fetch all repos from `origin` |
+| `p` | Fast-forward pull all clean repos |
+| `s` | Prompt for a branch name, then switch all clean repos to it |
+| `r` | Refresh now (don't wait for the interval) |
+| `q` / Ctrl-C | Quit |
+
+The action runs against the whole tree, the table refreshes immediately to show
+the result, and the footer notes the last action performed. The `s` prompt
+accepts Backspace and is cancelled with `Esc`. These are the same operations as
+the `fetch` / `pull` / `-s` commands — including creating a local tracking
+branch when switching to a branch that only exists on `origin`.
 
 - Uses the **alternate screen buffer**, so your scrollback is left untouched —
   the table is redrawn in place rather than scrolling past.
-- Press **`q`** (or **Ctrl-C**) to quit. The terminal is always restored on
-  exit, including on `SIGINT` / `SIGTERM`: the alternate screen is left, the
-  cursor is shown again and terminal settings are reset.
+- The terminal is always restored on exit, including on `SIGINT` / `SIGTERM`:
+  the alternate screen is left, the cursor is shown again and terminal settings
+  are reset.
 - No `ncurses` dependency — only raw ANSI escapes and `termios`.
 - Reuses the same parallel scan as the one-shot mode, so refreshes are fast.
 - Requires an interactive terminal; piping the output is rejected.
-- Cannot be combined with `fetch`, `pull` or `-s` (status display only).
+- The `fetch` and `pull` keys need the `git` binary (as for the subcommands).
 
 ## Dirty filter
 

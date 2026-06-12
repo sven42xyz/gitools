@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
   buffer so scrollback is left untouched, hides the cursor, and quits on `q` or
   Ctrl-C. The terminal is always restored on exit, including on `SIGINT` /
   `SIGTERM`. No `ncurses` dependency — raw ANSI escapes and `termios` only.
+  Interactive keys act on the whole tree without leaving the view: `f` fetch,
+  `p` pull, `s` switch (prompts for a branch name), `r` refresh now.
 - `gitls --dirty` — list only repos that are not clean and in sync (staged /
   modified / untracked files, ahead/behind, diverged or detached `HEAD`). The
   summary line still counts all scanned repos and appends `(N hidden)`. Works in
