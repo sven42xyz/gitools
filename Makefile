@@ -57,6 +57,12 @@ test: $(TARGET) tests/unit
 	@./tests/unit
 	@printf "\n=== Integration tests ===\n"
 	@sh tests/integration.sh
+	@printf "\n=== Watch PTY tests ===\n"
+	@if command -v python3 >/dev/null 2>&1; then \
+		python3 tests/watch_pty.py; \
+	else \
+		printf "  (skipped: python3 not found)\n"; \
+	fi
 
 tests/unit: tests/unit.c $(TEST_OBJS)
 	$(CC) $(CFLAGS) -o $@ tests/unit.c $(TEST_OBJS) $(LDFLAGS)

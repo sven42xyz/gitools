@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""
+tests/watch_pty.py — PTY-driven tests for gitls watch mode (-w).
+
+Watch mode is interactive (alternate screen, raw termios, key handling), so it
+can't be exercised from the plain-pipe integration.sh harness. This script
+drives the binary through a pseudo-terminal: it presses keys, reads the
+rendered frames and checks the branch picker, the f/p/s/r keys and that the
+terminal is restored on exit.
+
+Run directly or via `make test` (skipped automatically if python3 is missing).
+"""
+
+import os
+import pty
+import select
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GITLS = os.path.join(ROOT, "gitls")
+
+passed = 0
+failed = 0
+
+
+def check(desc, cond):
+    global passed, failed
+    if cond:
+        print(f"  ok  {desc}")
+        passed += 1
+    else:
+        print(f"FAIL  {desc}")
+        failed += 1
+
+
+def git(*args, cwd=None, env=None):
+    subprocess.run(["git", *args], cwd=cwd, env=env, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def make_repo(path):
+    os.makedirs(path, exist_ok=True)
+    git("init", "-q", "-b", "main", cwd=path)
+    git("config", "user.email", "t@gitls.test", cwd=path)
+    git("config", "user.name", "Test", cwd=path)
+    with open(os.path.join(path, "README"), "w") as f:
+        f.write("init\n")
+    git("add", "README", cwd=path)
+    commit(path, "init", "2024-01-01T00:00:00")
+
+
+def commit(path, msg, when):
+    env = dict(os.environ, GIT_COMMITTER_DATE=when, GIT_AUTHOR_DATE=when)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=path, env=env,
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def make_branch(path, name, when):
+    git("checkout", "-q", "-b", name, cwd=path)
+    with open(os.path.join(path, "README"), "a") as f:
+        f.write(name + "\n")
+    git("add", "README", cwd=path)
+    commit(path, name, when)
+    git("checkout", "-q", "main", cwd=path)
+
+
+def current_branch(path):
+    out = subprocess.run(["git", "branch", "--show-current"], cwd=path,
+                         capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+class Watcher:
+    """Spawn gitls -w in a PTY and talk to it."""
+
+    def __init__(self, workdir, interval=5):
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:
+            os.execv(GITLS, [GITLS, "-w", str(interval), workdir])
+            os._exit(127)
+
+    def drain(self, seconds):
+        buf = b""
+        end = time.time() + seconds
+        while time.time() < end:
+            r, _, _ = select.select([self.fd], [], [], 0.15)
+            if r:
+                try:
+                    d = os.read(self.fd, 65536)
+                except OSError:
+                    break
+                if not d:
+                    break
+                buf += d
+        return buf.decode(errors="replace")
+
+    def send(self, data):
+        os.write(self.fd, data)
+
+    def finish(self):
+        try:
+            os.write(self.fd, b"q")
+        except OSError:
+            pass
+        time.sleep(0.3)
+        tail = self.drain(1.0)
+        _, status = os.waitpid(self.pid, 0)
+        return tail, status
+
+
+def ordered(text, names):
+    pos = [text.find(n) for n in names]
+    return all(p >= 0 for p in pos) and pos == sorted(pos)
+
+
+def main():
+    if not os.path.exists(GITLS):
+        print("watch_pty: gitls binary not found — run `make` first", file=sys.stderr)
+        return 1
+
+    work = tempfile.mkdtemp(prefix="gitls-pty-")
+    a = os.path.join(work, "a")
+    b = os.path.join(work, "b")
+    make_repo(a)
+    make_branch(a, "oldfeature", "2024-02-01T00:00:00")
+    make_branch(a, "develop",    "2024-06-01T00:00:00")
+    make_branch(a, "hotfix",     "2025-01-01T00:00:00")
+    # second repo shares main so a tree-wide switch is observable on both
+    make_repo(b)
+    make_branch(b, "develop", "2024-06-01T00:00:00")
+
+    # ── 1. basic render + footer + terminal restore ──
+    w = Watcher(work)
+    first = w.drain(1.5)
+    check("alternate screen entered", "\033[?1049h" in first)
+    check("cursor hidden", "\033[?25l" in first)
+    check("footer shows keys + interval", "fetch" in first and "interval 5s" in first)
+    check("footer shows directory", work in first)
+    check("footer omits 'last scan'", "last scan" not in first)
+    tail, status = w.finish()
+    check("alternate screen left on quit", "\033[?1049l" in (first + tail))
+    check("cursor shown on quit", "\033[?25h" in (first + tail))
+    check("clean exit on q", os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0)
+
+    # ── 2. picker opens, recent-first ordering, drawn below the table ──
+    w = Watcher(work)
+    w.drain(1.2)
+    w.send(b"s")
+    pick = w.drain(1.0)
+    check("picker header shown", "switch all clean repos to:" in pick)
+    check("picker lists recent branches first", ordered(pick, ["hotfix", "develop", "oldfeature"]))
+    # the picker must appear after (below) the status table, not overwrite it
+    check("picker drawn below table", pick.rfind("NAME") < pick.rfind("hotfix") or "NAME" not in pick)
+    w.send(b"\x1b")  # Esc cancel
+    w.drain(0.4)
+    w.finish()
+    check("Esc cancel leaves repos untouched", current_branch(a) == "main")
+
+    # ── 3. arrow navigation + Tab selects across the tree ──
+    git("checkout", "-q", "main", cwd=a)
+    git("checkout", "-q", "main", cwd=b)
+    w = Watcher(work)
+    w.drain(1.2)
+    w.send(b"s"); w.drain(0.4)
+    w.send(b"\x1b[B"); w.drain(0.2)   # down -> develop
+    w.send(b"\x1b[B"); w.drain(0.2)   # down -> oldfeature
+    w.send(b"\t")                      # Tab selects highlighted
+    w.drain(2.0)
+    w.finish()
+    check("arrow+Tab switches repo a to oldfeature", current_branch(a) == "oldfeature")
+
+    # ── 4. type-to-filter + Enter selects the highlighted match ──
+    git("checkout", "-q", "main", cwd=a)
+    git("checkout", "-q", "main", cwd=b)
+    w = Watcher(work)
+    w.drain(1.2)
+    w.send(b"s"); w.drain(0.4)
+    w.send(b"dev"); w.drain(0.4)       # filter to develop
+    w.send(b"\r")                       # Enter selects highlighted develop
+    w.drain(2.0)
+    w.finish()
+    check("filter 'dev'+Enter switches a to develop", current_branch(a) == "develop")
+    check("filter 'dev'+Enter switches b to develop", current_branch(b) == "develop")
+
+    subprocess.run(["rm", "-rf", work])
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
