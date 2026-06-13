@@ -14,6 +14,7 @@ Run directly or via `make test` (skipped automatically if python3 is missing).
 import os
 import pty
 import select
+import signal
 import subprocess
 import sys
 import tempfile
@@ -183,8 +184,28 @@ class Watcher:
             pass
         time.sleep(0.3)
         tail = self.drain(1.0)
-        _, status = os.waitpid(self.pid, 0)
+        status = self._reap(timeout=3.0)
         return tail, status
+
+    def _reap(self, timeout):
+        """Bounded wait so a stuck child never hangs the suite."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid == self.pid:
+                return status
+            time.sleep(0.05)
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.kill(self.pid, sig)
+            except ProcessLookupError:
+                break
+            time.sleep(0.3)
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid == self.pid:
+                return status
+        _, status = os.waitpid(self.pid, 0)
+        return status
 
 
 def ordered(text, names):

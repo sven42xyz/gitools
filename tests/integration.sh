@@ -445,6 +445,14 @@ check "--dirty notes hidden count"  "(1 hidden)" "$GITLS" --no-color --dirty "$D
 printf 'dirty_only=true\n' > "$CFG"
 check "config dirty_only hides clean" "(1 hidden)" \
     env GITLS_CONFIG="$CFG" "$GITLS" --no-color "$DF"
+# --no-dirty on the CLI overrides dirty_only=true from the config
+out=$(GITLS_CONFIG="$CFG" "$GITLS" --no-color --no-dirty "$DF" 2>&1)
+if printf '%s' "$out" | grep -qF "clean-repo" && ! printf '%s' "$out" | grep -qF "hidden"; then
+    printf "  ok  --no-dirty overrides config dirty_only\n"; passed=$((passed + 1))
+else
+    printf "FAIL  --no-dirty overrides config dirty_only\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
 
 # ── watch mode guards ─────────────────────────────────────────────────────────
 printf "\nwatch mode guards\n"
