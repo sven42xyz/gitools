@@ -20,5 +20,6 @@ class Gitls < Formula
   test do
     system "#{bin}/gitls", "--version"
     system "#{bin}/gitls", testpath.to_s
+    assert_path_exists man1/"gitls.1"
   end
 end
