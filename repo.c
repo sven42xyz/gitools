@@ -25,6 +25,11 @@ static char g_git_path[PATH_MAX] = "";
  * run_git_capture can use execve(g_git_path) instead of execvp("git").
  * execve is a direct syscall (async-signal-safe); execvp calls getenv+malloc.
  */
+/* True once resolve_git_path() has found a usable git binary. */
+int git_available(void) {
+    return g_git_path[0] != '\0';
+}
+
 void resolve_git_path(void) {
     const char *path_env = getenv("PATH");
     if (!path_env) return;
@@ -64,6 +69,110 @@ void collect_path(const char *path) {
 /* ── Repo array (pre-allocated before threading) ───────────────────────────── */
 Repo  *g_repos     = NULL;
 size_t g_repo_count = 0;
+
+/* ── Recent branches (for the watch-mode switch picker) ─────────────────────── */
+char  **g_recent_branches    = NULL;
+size_t  g_recent_branch_count = 0;
+
+typedef struct { char name[256]; git_time_t t; } BranchEnt;
+
+static int branch_cmp(const void *a, const void *b) {
+    const BranchEnt *x = a, *y = b;
+    if (x->t < y->t) return 1;     /* most recent first */
+    if (x->t > y->t) return -1;
+    return strcmp(x->name, y->name);
+}
+
+void free_recent_branches(void) {
+    for (size_t i = 0; i < g_recent_branch_count; i++)
+        free(g_recent_branches[i]);
+    free(g_recent_branches);
+    g_recent_branches     = NULL;
+    g_recent_branch_count = 0;
+}
+
+/*
+ * Build a de-duplicated list of local branch names across all collected repos,
+ * ordered by most recent commit date. Used by the watch-mode switch picker.
+ * Must be called while g_paths is still populated.
+ */
+void collect_recent_branches(void) {
+    free_recent_branches();
+
+    size_t cap = 0, n = 0;
+    BranchEnt *ents = NULL;
+
+    for (size_t i = 0; i < g_path_count; i++) {
+        git_repository *repo = NULL;
+        if (git_repository_open(&repo, g_paths[i]) != 0) continue;
+
+        git_branch_iterator *it = NULL;
+        if (git_branch_iterator_new(&it, repo, GIT_BRANCH_LOCAL) == 0) {
+            git_reference *ref = NULL;
+            git_branch_t   type;
+            while (git_branch_next(&ref, &type, it) == 0) {
+                const char *name = NULL;
+                if (git_branch_name(&name, ref) == 0 && name) {
+                    git_time_t t = 0;
+                    git_object *obj = NULL;
+                    if (git_reference_peel(&obj, ref, GIT_OBJECT_COMMIT) == 0) {
+                        t = git_commit_time((git_commit *)obj);
+                        git_object_free(obj);
+                    }
+                    /* upsert: keep the most recent timestamp per branch name */
+                    size_t j;
+                    for (j = 0; j < n; j++)
+                        if (strcmp(ents[j].name, name) == 0) break;
+                    if (j < n) {
+                        if (t > ents[j].t) ents[j].t = t;
+                    } else {
+                        if (n == cap) {
+                            size_t ncap = cap ? cap * 2 : 16;
+                            BranchEnt *tmp = realloc(ents, ncap * sizeof(*ents));
+                            if (!tmp) { git_reference_free(ref); break; }
+                            ents = tmp;
+                            cap  = ncap;
+                        }
+                        snprintf(ents[n].name, sizeof(ents[n].name), "%s", name);
+                        ents[n].t = t;
+                        n++;
+                    }
+                }
+                git_reference_free(ref);
+            }
+            git_branch_iterator_free(it);
+        }
+        git_repository_free(repo);
+    }
+
+    if (n == 0) { free(ents); return; }
+
+    qsort(ents, n, sizeof(*ents), branch_cmp);
+
+    g_recent_branches = malloc(n * sizeof(char *));
+    if (!g_recent_branches) { free(ents); return; }
+    for (size_t i = 0; i < n; i++)
+        g_recent_branches[i] = strdup(ents[i].name);   /* NULL on OOM is tolerated */
+    g_recent_branch_count = n;
+    free(ents);
+}
+
+/*
+ * Free the collected paths and repo array, resetting all counters so the
+ * scan can be repeated (used by the watch loop between refreshes).
+ */
+void free_repo_collection(void) {
+    for (size_t i = 0; i < g_path_count; i++)
+        free(g_paths[i]);
+    free(g_paths);
+    g_paths      = NULL;
+    g_path_count = 0;
+    g_path_cap   = 0;
+
+    free(g_repos);
+    g_repos      = NULL;
+    g_repo_count = 0;
+}
 
 /* ── Branch ────────────────────────────────────────────────────────────────── */
 static void fill_branch(Repo *r, git_repository *repo) {
@@ -537,19 +646,24 @@ void process_all_repos(const char *dir) {
      * The Phase 2 spinner uses write() (async-signal-safe) so it can run safely
      * alongside the fork() calls in net_worker_thread. */
     if (opt_fetch || opt_pull) {
-        spinner_stop();
-        printf("  Found %zu repo%s\n", g_path_count,
-               g_path_count == 1 ? "" : "s");
-        fflush(stdout);
+        /* watch mode renders on the alternate screen and shows its own
+         * progress, so the inter-phase line and spinner are suppressed there */
+        if (!opt_watch) {
+            spinner_stop();
+            printf("  Found %zu repo%s\n", g_path_count,
+                   g_path_count == 1 ? "" : "s");
+            fflush(stdout);
 
-        const char *verb = opt_fetch ? "Fetching:" : "Pulling:";
-        char phase2[PATH_MAX + 64];
-        snprintf(phase2, sizeof(phase2), "%s%s%s %s",
-                 C(COL_BOLD), verb, C(COL_RESET), dir);
-        spinner_start(phase2);
+            const char *verb = opt_fetch ? "Fetching:" : "Pulling:";
+            char phase2[PATH_MAX + 64];
+            snprintf(phase2, sizeof(phase2), "%s%s%s %s",
+                     C(COL_BOLD), verb, C(COL_RESET), dir);
+            spinner_start(phase2);
+        }
 
         atomic_store(&net_idx, 0);
         run_thread_pool(nthreads, net_worker_thread);
-        spinner_stop();
+
+        if (!opt_watch) spinner_stop();
     }
 }

@@ -1,8 +1,8 @@
 class Gitls < Formula
   desc "A fast, minimal tool to inspect and act on multiple git repositories"
   homepage "https://github.com/sven42xyz/gitools"
-  url "https://github.com/sven42xyz/gitools/archive/refs/tags/v0.3.1.tar.gz"
-  sha256 "f144bbb03f21ab39a0b3c0245e5aff590f186f55e6d06e4afcfb8fb406019ba3"
+  url "https://github.com/sven42xyz/gitools/archive/refs/tags/v0.4.0.tar.gz"
+  sha256 "TBD_AFTER_TAG"  # update with: shasum -a 256 of the v0.4.0 tarball
   license "MIT"
   head "https://github.com/sven42xyz/gitools.git", branch: "main"
 
@@ -20,5 +20,6 @@ class Gitls < Formula
   test do
     system "#{bin}/gitls", "--version"
     system "#{bin}/gitls", testpath.to_s
+    assert_path_exists man1/"gitls.1"
   end
 end

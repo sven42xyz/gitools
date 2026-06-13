@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-06-13
+
+### Added
+- `gitls -w` / `--watch` — watch mode: refreshes the status table in place at a
+  configurable interval (default 3 s, e.g. `-w 10`). Uses the alternate screen
+  buffer so scrollback is left untouched, hides the cursor, and quits on `q` or
+  Ctrl-C. The terminal is always restored on exit, including on `SIGINT` /
+  `SIGTERM`. No `ncurses` dependency — raw ANSI escapes and `termios` only.
+  Interactive keys act on the whole tree without leaving the view: `f` fetch,
+  `p` pull, `s` switch, `r` refresh now. The `s` key opens a branch picker that
+  lists recently active branches (most recent first) with type-to-filter, ↑/↓
+  navigation and Tab/Enter selection.
+- `gitls --dirty` — list only repos that are not clean and in sync (staged /
+  modified / untracked files, ahead/behind, diverged or detached `HEAD`). The
+  summary line still counts all scanned repos and appends `(N hidden)`. Works in
+  one-shot mode and under `-w`.
+- `~/.gitlsrc` keys `watch_interval` and `dirty_only`; CLI flags override them
+  (`--no-dirty` opts out of `dirty_only` for a single run).
+- `gitls(1)` man page, installed by `make install` and packaged in the RPM. The
+  install/uninstall targets now honour `DESTDIR` for packaging.
+
+### Fixed
+- Long branch names (or any over-wide row) no longer wrap and corrupt the table:
+  the NAME / BRANCH columns are now capped to the terminal width (content is
+  truncated with `~`). Affects both the one-shot table and watch mode. Piped
+  output is still emitted at full width. Over-long `Scanned:` / footer paths are
+  shortened with a leading `…`.
+
+- Watch mode no longer corrupted the table when a refresh produced a narrower
+  frame (e.g. switching to a shorter branch name) — each rewritten line is now
+  cleared to its end, so no stale columns (a duplicate WHEN/STATUS) are left
+  behind. The table also stays on screen while an action runs.
+
+### Changed
+- Watch mode now animates a spinner with the action verb (Fetching / Pulling /
+  Switching) while a fetch / pull / switch runs, instead of a static line.
+
 ## [0.3.1] – 2026-03-08
 
 ### Fixed

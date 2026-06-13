@@ -1,8 +1,8 @@
 CC      = cc
 TARGET  = gitls
 PREFIX  = /usr/local
-VERSION := $(shell (git describe --tags --always --dirty 2>/dev/null || echo "0.3.1") | sed 's/^v//')
-SRCS    = main.c repo.c display.c scan.c config.c
+VERSION := $(shell (git describe --tags --always --dirty 2>/dev/null || echo "0.4.0") | sed 's/^v//')
+SRCS    = main.c repo.c display.c scan.c config.c watch.c
 OBJS    = $(SRCS:.c=.o)
 DEPS    = $(OBJS:.o=.d)
 
@@ -57,6 +57,12 @@ test: $(TARGET) tests/unit
 	@./tests/unit
 	@printf "\n=== Integration tests ===\n"
 	@sh tests/integration.sh
+	@printf "\n=== Watch PTY tests ===\n"
+	@if command -v python3 >/dev/null 2>&1; then \
+		python3 tests/watch_pty.py; \
+	else \
+		printf "  (skipped: python3 not found)\n"; \
+	fi
 
 tests/unit: tests/unit.c $(TEST_OBJS)
 	$(CC) $(CFLAGS) -o $@ tests/unit.c $(TEST_OBJS) $(LDFLAGS)
@@ -66,16 +72,21 @@ clean:
 	find . -name '*.d' -not -path './.git/*' -delete
 
 INSTALL_NAME ?= $(TARGET)
+MANDIR        = $(PREFIX)/share/man/man1
+DOCDIR        = $(PREFIX)/share/doc/$(TARGET)
 
 install: $(TARGET)
-	install -d $(PREFIX)/bin
-	install -m 755 $(TARGET) $(PREFIX)/bin/$(INSTALL_NAME)
-	install -d $(PREFIX)/share/doc/$(TARGET)
-	install -m 644 gitlsrc.example $(PREFIX)/share/doc/$(TARGET)/gitlsrc.example
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(INSTALL_NAME)
+	install -d $(DESTDIR)$(DOCDIR)
+	install -m 644 gitlsrc.example $(DESTDIR)$(DOCDIR)/gitlsrc.example
+	install -d $(DESTDIR)$(MANDIR)
+	install -m 644 gitls.1 $(DESTDIR)$(MANDIR)/$(INSTALL_NAME).1
 
 uninstall:
-	rm -f $(PREFIX)/bin/$(INSTALL_NAME)
-	rm -f $(PREFIX)/share/doc/$(TARGET)/gitlsrc.example
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(INSTALL_NAME)
+	rm -f $(DESTDIR)$(DOCDIR)/gitlsrc.example
+	rm -f $(DESTDIR)$(MANDIR)/$(INSTALL_NAME).1
 
 help:
 	@printf "Usage: make [TARGET] [VARIABLES]\n\n"

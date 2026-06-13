@@ -1,5 +1,5 @@
 Name:           gitls
-Version:        0.3.1
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        A fast, minimal tool to inspect and act on multiple git repositories
 
@@ -32,8 +32,17 @@ It also supports bulk branch switching with the -s flag.
 %license LICENSE
 %doc README.md NOTICE
 %{_bindir}/gitls
+%{_mandir}/man1/gitls.1*
+%{_datadir}/doc/gitls/gitlsrc.example
 
 %changelog
+* Sat Jun 13 2026 Sven Siepermann <sven@siepermann.dev> - 0.4.0-1
+- Watch mode (-w/--watch): live in-place table with interactive keys (fetch,
+  pull, switch, refresh) and a recent-branch picker
+- --dirty / --no-dirty filter; watch_interval and dirty_only config keys
+- Fix: cap NAME/BRANCH columns to terminal width (no wrapped/corrupted table)
+- gitls(1) man page; install/uninstall honour DESTDIR
+
 * Sat Mar 08 2026 Sven Siepermann <sven@siepermann.dev> - 0.3.1-1
 - Parallel fetch/pull (thread pool), spinner stays visible during network ops
 - fork() safety: execvp replaced with execve using pre-resolved git path

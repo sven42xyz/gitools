@@ -88,6 +88,9 @@ extern bool   opt_switch;
 extern char   opt_switch_branch[256];
 extern bool   opt_fetch;
 extern bool   opt_pull;
+extern bool   opt_watch;
+extern int    opt_watch_interval;
+extern bool   opt_dirty_only;
 extern char   opt_default_dir[PATH_MAX];
 extern char **opt_extra_skip;
 extern size_t opt_extra_skip_count;
@@ -97,6 +100,8 @@ extern Repo  *g_repos;
 extern size_t g_repo_count;
 extern char **g_paths;
 extern size_t g_path_count;
+extern char **g_recent_branches;
+extern size_t g_recent_branch_count;
 
 /* ── Function prototypes ───────────────────────────────────────────────────── */
 
@@ -105,11 +110,18 @@ void load_config(void);
 
 /* repo.c */
 void resolve_git_path(void);
+int  git_available(void);
 void collect_path(const char *path);
 void process_all_repos(const char *dir);
+void free_repo_collection(void);
+void collect_recent_branches(void);
+void free_recent_branches(void);
 
 /* display.c */
 const char *C(const char *color);
+const char *EOL(void);
+int         term_width(void);
+const char *ellipsize(const char *s, int max_w);
 int         utf8_width(const char *s);
 const char *relative_time(git_time_t t);
 void        write_col(const char *s, int width);
@@ -117,6 +129,8 @@ ColWidths   compute_col_widths(void);
 void        print_separator(const ColWidths *w);
 void        print_header(const ColWidths *w);
 void        print_repo(const Repo *r, const ColWidths *w);
+bool        repo_is_dirty(const Repo *r);
+void        print_status_table(const ColWidths *w, bool dirty_only);
 void        print_switch_summary(const ColWidths *w);
 void        print_fetch_summary(const ColWidths *w);
 void        print_pull_summary(const ColWidths *w);
@@ -125,3 +139,6 @@ void        spinner_stop(void);
 
 /* scan.c */
 void find_repos(const char *path, int depth);
+
+/* watch.c */
+void run_watch(const char *abs_dir);

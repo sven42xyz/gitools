@@ -3,18 +3,64 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <stdatomic.h>
 #include <pthread.h>
 
 #include "gitools.h"
 
+/* Terminal width in columns, or 0 when unknown (e.g. output is piped — then
+ * the table is printed at full width so scripts get complete data). */
+int term_width(void) {
+    if (!isatty(STDOUT_FILENO))
+        return 0;   /* piped output → full width so scripts get complete data */
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+        return ws.ws_col;
+    const char *cols = getenv("COLUMNS");
+    if (cols) { int v = atoi(cols); if (v > 0) return v; }
+    return 0;
+}
+
+/* Truncate s to at most max_w display columns. For paths the tail is the most
+ * useful part, so the front is dropped and replaced with a leading ellipsis.
+ * Returns a pointer to a rotating static buffer. */
+const char *ellipsize(const char *s, int max_w) {
+    static char buf[PATH_MAX + 8];
+    int w = utf8_width(s);
+    if (max_w < 2 || w <= max_w) {
+        snprintf(buf, sizeof(buf), "%s", s);
+        return buf;
+    }
+    int drop = w - (max_w - 1);          /* reserve 1 column for the ellipsis */
+    const unsigned char *p = (const unsigned char *)s;
+    int skipped = 0;
+    while (*p && skipped < drop) {
+        int seqlen = *p < 0x80 ? 1 : *p < 0xE0 ? 2 : *p < 0xF0 ? 3 : 4;
+        for (int j = 1; j < seqlen; j++) if (p[j] == '\0') { seqlen = j; break; }
+        p += seqlen;
+        skipped++;
+    }
+    snprintf(buf, sizeof(buf), "\xe2\x80\xa6%s", (const char *)p);   /* … + tail */
+    return buf;
+}
+
 /* ── Colour helper ─────────────────────────────────────────────────────────── */
 const char *C(const char *color) {
     return opt_no_color ? "" : color;
+}
+
+/* Erase-to-end-of-line marker emitted at the end of every rewritten line in
+ * watch mode, so a narrower frame doesn't leave stale characters (e.g. a second
+ * WHEN/STATUS column) from the previous, wider one. Empty outside watch mode so
+ * piped output stays clean. */
+const char *EOL(void) {
+    return opt_watch ? "\033[K" : "";
 }
 
 /* ── Relative time ─────────────────────────────────────────────────────────── */
@@ -139,6 +185,24 @@ ColWidths compute_col_widths(void) {
 
         w.time = MAX(w.time, utf8_width(relative_time(r->last_commit)));
     }
+
+    /* Cap the variable NAME / BRANCH columns so a single row never exceeds the
+     * terminal width and wraps (which would corrupt the table, and the in-place
+     * redraw in watch mode). write_col() truncates over-long content with '~'.
+     * The layout is: 2(lead) + name +2 + branch +2 + sync +2 + time +2 + STATUS. */
+    int tw = term_width();
+    if (tw > 0) {
+        const int status_reserve = 14;   /* room for e.g. ●9 ✗9 ?9 */
+        int other = 2 + 2 + 2 + 2 + 2 + w.sync + w.time + status_reserve;
+        int avail = tw - other;          /* budget shared by NAME + BRANCH */
+        if (avail < 10) avail = 10;
+        while (w.name + w.branch > avail) {
+            if (w.branch > 6 && w.branch >= w.name) w.branch--;
+            else if (w.name > 4)                    w.name--;
+            else if (w.branch > 6)                  w.branch--;
+            else break;                  /* at minimums (NAME 4 / BRANCH 6) */
+        }
+    }
     return w;
 }
 
@@ -148,19 +212,19 @@ void print_separator(const ColWidths *w) {
                 + (int)strlen("STATUS");
     printf("  %s", C(COL_DIM));
     for (int i = 0; i < total; i++) printf("─");
-    printf("%s\n", C(COL_RESET));
+    printf("%s%s\n", C(COL_RESET), EOL());
 }
 
 /* ── Table header ──────────────────────────────────────────────────────────── */
 void print_header(const ColWidths *w) {
-    printf("  %s%-*s  %-*s  %-*s  %-*s  %s%s\n",
+    printf("  %s%-*s  %-*s  %-*s  %-*s  %s%s%s\n",
         C(COL_DIM),
         w->name,   "NAME",
         w->branch, "BRANCH",
         w->sync,   "SYNC",
         w->time,   "WHEN",
         "STATUS",
-        C(COL_RESET));
+        C(COL_RESET), EOL());
     print_separator(w);
 }
 
@@ -193,7 +257,56 @@ void print_repo(const Repo *r, const ColWidths *w) {
         if (r->modified)  printf("%s✗%d%s ", C(COL_RED),     r->modified,  C(COL_RESET));
         if (r->untracked) printf("%s?%d%s",  C(COL_MAGENTA), r->untracked, C(COL_RESET));
     }
-    printf("\n");
+    printf("%s\n", EOL());
+}
+
+/* ── Dirty filter ──────────────────────────────────────────────────────────── */
+/*
+ * A repo is "dirty" (worth showing under --dirty) when it is not both clean
+ * and in sync: any staged/modified/untracked files, any ahead/behind commits,
+ * or a detached / unborn HEAD (branch rendered as "(...)").
+ */
+bool repo_is_dirty(const Repo *r) {
+    if (r->staged || r->modified || r->untracked) return true;
+    if (r->ahead || r->behind)                    return true;
+    if (r->branch[0] == '(')                      return true;
+    return false;
+}
+
+/* ── Status table ──────────────────────────────────────────────────────────── */
+/*
+ * Print the header, one row per repo and the trailing summary line.
+ * When dirty_only is set, clean+in-sync repos are hidden from the listing but
+ * still counted in the summary, which appends "(N hidden)".
+ */
+void print_status_table(const ColWidths *w, bool dirty_only) {
+    print_header(w);
+
+    int total = 0, clean = 0, dirty = 0, behind = 0, hidden = 0;
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        total++;
+        if (r->staged || r->modified || r->untracked) dirty++; else clean++;
+        if (r->behind > 0) behind++;
+
+        if (dirty_only && !repo_is_dirty(r)) { hidden++; continue; }
+        print_repo(r, w);
+    }
+
+    print_separator(w);
+    if (total == 0) {
+        printf("  No git repositories found.%s\n", EOL());
+    } else {
+        printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
+            C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
+            C(COL_GREEN), clean,  C(COL_RESET),
+            C(COL_RED),   dirty,  C(COL_RESET));
+        if (behind > 0)
+            printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
+        if (hidden > 0)
+            printf(" %s(%d hidden)%s", C(COL_DIM), hidden, C(COL_RESET));
+        printf("%s\n", EOL());
+    }
 }
 
 /* ── Switch summary ────────────────────────────────────────────────────────── */

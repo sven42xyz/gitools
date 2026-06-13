@@ -19,6 +19,9 @@ bool   opt_switch                = false;
 char   opt_switch_branch[256]    = "";
 bool   opt_fetch                 = false;
 bool   opt_pull                  = false;
+bool   opt_watch                 = false;
+int    opt_watch_interval        = 3;
+bool   opt_dirty_only            = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip            = NULL;
 size_t opt_extra_skip_count      = 0;
@@ -69,10 +72,22 @@ static void test_relative_time(void) {
     CHECK("1 year ago",         strcmp(relative_time(now - 31536000), "1 yr ago")   == 0);
 }
 
+/* ── ellipsize ──────────────────────────────────────────────────────────────── */
+static void test_ellipsize(void) {
+    printf("\nellipsize\n");
+    CHECK("short string unchanged",  strcmp(ellipsize("abc", 10),  "abc")   == 0);
+    CHECK("exact fit unchanged",     strcmp(ellipsize("abcde", 5), "abcde") == 0);
+    /* drops the front, keeps the tail, prefixes a 1-column ellipsis */
+    CHECK("long string truncated",   strcmp(ellipsize("abcdefghij", 5), "\xe2\x80\xa6ghij") == 0);
+    CHECK("truncated width fits",    utf8_width(ellipsize("abcdefghij", 5)) == 5);
+    CHECK("max_w < 2 returns full",  strcmp(ellipsize("abcdef", 1), "abcdef") == 0);
+}
+
 /* ── main ───────────────────────────────────────────────────────────────────── */
 int main(void) {
     test_utf8_width();
     test_relative_time();
+    test_ellipsize();
 
     printf("\n%d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;

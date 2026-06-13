@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <errno.h>
 #include <pwd.h>
 #include <unistd.h>
 
@@ -105,6 +106,17 @@ void load_config(void) {
             opt_extra_skip       = arr;
             opt_extra_skip_count = idx;
             free(copy);
+
+        } else if (strcmp(key, "watch_interval") == 0) {
+            char *end;
+            errno = 0;
+            long iv = strtol(val, &end, 10);
+            if (*end == '\0' && errno != ERANGE && iv >= 1 && iv <= INT_MAX)
+                opt_watch_interval = (int)iv;
+
+        } else if (strcmp(key, "dirty_only") == 0) {
+            if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
+                opt_dirty_only = true;
 
         } else if (strcmp(key, "no_color") == 0) {
             if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)

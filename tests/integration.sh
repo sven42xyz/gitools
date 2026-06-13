@@ -421,6 +421,49 @@ else
     failed=$((failed + 1))
 fi
 
+# ── --dirty filter ────────────────────────────────────────────────────────────
+printf "\n--dirty filter\n"
+DF="$WORK/dirtyfilter"
+mkgit "$DF/clean-repo"
+mkgit "$DF/modified-repo"; printf 'change\n' >> "$DF/modified-repo/README"
+# without --dirty the clean repo is listed
+check "clean repo listed without --dirty" "clean-repo" "$GITLS" --no-color "$DF"
+# with --dirty the clean repo is hidden, the modified one shown
+out=$("$GITLS" --no-color --dirty "$DF" 2>&1)
+if printf '%s' "$out" | grep -qF "modified-repo" && \
+   ! printf '%s' "$out" | grep -qF "clean-repo"; then
+    printf "  ok  --dirty hides clean repo, shows dirty one\n"; passed=$((passed + 1))
+else
+    printf "FAIL  --dirty hides clean repo, shows dirty one\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+# summary still counts all repos and notes the hidden one
+check "--dirty summary counts all"  "2 repos" "$GITLS" --no-color --dirty "$DF"
+check "--dirty notes hidden count"  "(1 hidden)" "$GITLS" --no-color --dirty "$DF"
+
+# config dirty_only enables the filter; CLI behaviour matches --dirty
+printf 'dirty_only=true\n' > "$CFG"
+check "config dirty_only hides clean" "(1 hidden)" \
+    env GITLS_CONFIG="$CFG" "$GITLS" --no-color "$DF"
+# --no-dirty on the CLI overrides dirty_only=true from the config
+out=$(GITLS_CONFIG="$CFG" "$GITLS" --no-color --no-dirty "$DF" 2>&1)
+if printf '%s' "$out" | grep -qF "clean-repo" && ! printf '%s' "$out" | grep -qF "hidden"; then
+    printf "  ok  --no-dirty overrides config dirty_only\n"; passed=$((passed + 1))
+else
+    printf "FAIL  --no-dirty overrides config dirty_only\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# ── watch mode guards ─────────────────────────────────────────────────────────
+printf "\nwatch mode guards\n"
+WD="$WORK/watchguard"; mkgit "$WD/repo"
+# piped (non-tty) stdout must be rejected
+check "watch rejects non-tty"     "interactive terminal" "$GITLS" -w "$WD"
+# combining -w with a subcommand is rejected
+check "watch rejects fetch combo" "cannot be combined"   "$GITLS" -w fetch "$WD"
+# invalid interval is rejected
+check "watch rejects bad interval" "positive number"     "$GITLS" -w 0 "$WD"
+
 # ── cleanup ───────────────────────────────────────────────────────────────────
 rm -rf "$WORK"
 printf "\n%d passed, %d failed\n" "$passed" "$failed"
