@@ -62,8 +62,9 @@ static void usage(const char *prog) {
         "Options:\n"
         "  -s <branch>  Switch all clean repos to <branch> if it exists\n"
         "  -d <n>       Max search depth (default: 5)\n"
-        "  -w [n]       Watch mode: refresh the table every n seconds (default: 3)\n"
-        "  --dirty      Only list repos that are not clean and in sync\n"
+        "  -w, --watch [n]  Watch mode: refresh the table every n seconds (default: 3)\n"
+        "  --dirty      Only list repos that are not both clean and in sync\n"
+        "  --no-dirty   Show all repos (overrides dirty_only from the config)\n"
         "  -a           Include hidden directories\n"
         "  -v           Verbose: show all repos in summaries, not just changed ones\n"
         "  --no-color   Disable ANSI colours\n"
@@ -148,6 +149,8 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--dirty") == 0) {
             opt_dirty_only = true;
+        } else if (strcmp(argv[i], "--no-dirty") == 0) {
+            opt_dirty_only = false;   /* explicit CLI opt-out overrides config */
         } else if (strcmp(argv[i], "-s") == 0) {
             if (i + 1 >= argc) { fprintf(stderr, "Error: -s requires a branch name\n"); return 1; }
             opt_switch = true;
@@ -172,8 +175,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: -w cannot be combined with fetch/pull/-s\n");
         return 1;
     }
-    if (opt_watch && !isatty(STDOUT_FILENO)) {
-        fprintf(stderr, "Error: -w requires an interactive terminal\n");
+    if (opt_watch && (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO))) {
+        fprintf(stderr, "Error: -w requires an interactive terminal on stdin and stdout\n");
         return 1;
     }
 

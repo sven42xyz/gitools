@@ -17,9 +17,10 @@
 /* Terminal width in columns, or 0 when unknown (e.g. output is piped — then
  * the table is printed at full width so scripts get complete data). */
 int term_width(void) {
+    if (!isatty(STDOUT_FILENO))
+        return 0;   /* piped output → full width so scripts get complete data */
     struct winsize ws;
-    if (isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0
-            && ws.ws_col > 0)
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
         return ws.ws_col;
     const char *cols = getenv("COLUMNS");
     if (cols) { int v = atoi(cols); if (v > 0) return v; }

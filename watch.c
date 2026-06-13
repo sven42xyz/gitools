@@ -280,15 +280,17 @@ static void print_footer(const char *abs_dir, int interval_sec, const char *note
 
 /* ── Public entry point ────────────────────────────────────────────────────── */
 void run_watch(const char *abs_dir) {
-    write_seq(ALT_SCREEN_ON);
-    write_seq(CURSOR_HIDE);
-    enter_raw_mode();
-
+    /* install cleanup hooks before touching terminal state, so a signal in the
+     * window before/while we switch screens still restores the terminal */
     atexit(restore_terminal);
     struct sigaction sa = { 0 };
     sa.sa_handler = on_signal;
     sigaction(SIGINT,  &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
+
+    write_seq(ALT_SCREEN_ON);
+    write_seq(CURSOR_HIDE);
+    enter_raw_mode();
 
     /* pending action applied on the next scan: 0 = plain refresh, else a key */
     int  action = 0;
