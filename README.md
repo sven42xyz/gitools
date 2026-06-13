@@ -67,7 +67,7 @@ Subcommands:
 
 Options:
   -s <branch>      Switch all clean repos to <branch> if it exists
-  -d <n>           Max search depth (default: 5)
+  -d [n]           Max search depth (default: 5)
   -w, --watch [n]  Watch mode: refresh the table every n seconds (default: 3)
   --dirty          Only list repos that are not both clean and in sync
   --no-dirty       Show all repos (overrides dirty_only from the config)
