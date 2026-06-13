@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-06-13
 
 ### Added
 - `gitls -w` / `--watch` — watch mode: refreshes the status table in place at a
