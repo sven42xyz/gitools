@@ -1,0 +1,257 @@
+.\" Manpage for gitls.
+.\" Contact sven@siepermann.dev to correct errors or typos.
+.TH GITLS 1 "2026-06-13" "gitls" "User Commands"
+.SH NAME
+gitls \- inspect and act on multiple git repositories at once
+.SH SYNOPSIS
+.B gitls
+.RB [ fetch | pull ]
+.RI [ options ]
+.RI [ directory ]
+.SH DESCRIPTION
+.B gitls
+recursively scans
+.I directory
+(the current directory by default) for git repositories and prints a compact
+status table: repository name, current branch, sync state relative to the
+upstream remote, relative last\-commit time, and the working\-tree status
+(staged, modified and untracked file counts).
+.PP
+Beyond the read\-only listing, it can act on every clean repository at once \(em
+switch branches
+.RB ( \-s ),
+fetch
+.RB ( fetch )
+or fast\-forward pull
+.RB ( pull )
+\(em and a live watch mode
+.RB ( \-w )
+keeps the table on screen and lets you trigger those actions interactively.
+.PP
+Repositories are processed in parallel. The directories
+.IR vendor , " node_modules"
+and
+.I .git
+internals are skipped automatically.
+.SH SUBCOMMANDS
+.TP
+.B fetch
+Fetch every repository from its
+.I origin
+remote and show the updated ahead/behind status. May be combined with
+.BR \-s .
+.TP
+.B pull
+Fast\-forward pull every clean repository. Repositories with staged or modified
+files are skipped; diverged repositories are reported and never force\-merged.
+.PP
+A subcommand may appear before or after the options.
+.SH OPTIONS
+.TP
+.BI \-s " branch"
+Switch every clean repository to
+.I branch
+if it exists. A repository is switched only when it has no staged or modified
+files. With
+.BR fetch ,
+a local tracking branch is created automatically from
+.IB origin / branch
+when the branch is not present locally. Cannot be combined with
+.BR pull .
+.TP
+.BI \-d " n"
+Maximum directory recursion depth (default: 5).
+.TP
+.BR \-w ", " \-\-watch " [\fIn\fR]"
+Watch mode: render the status table on the alternate screen and refresh it in
+place every
+.I n
+seconds (default: 3). Interactive; see
+.B WATCH MODE
+below. Requires an interactive terminal on both stdin and stdout and cannot be
+combined with
+.BR fetch ", " pull " or " \-s .
+.TP
+.B \-\-dirty
+List only repositories that are not both clean and in sync \(em those with
+staged, modified or untracked files, commits ahead of or behind the remote, a
+diverged branch, or a detached HEAD. The summary line still counts all scanned
+repositories and notes how many were hidden.
+.TP
+.B \-\-no\-dirty
+Show all repositories, overriding
+.B dirty_only
+from the configuration file for a single run.
+.TP
+.B \-a
+Include hidden directories (those whose name begins with a dot) in the scan.
+.TP
+.B \-v
+Verbose: list every repository in the fetch/pull/switch summaries, not just the
+ones that changed.
+.TP
+.B \-\-no\-color
+Disable ANSI colour output.
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Print a usage summary and exit.
+.SH WATCH MODE
+In watch mode the table is redrawn in place at a fixed interval on the
+terminal's alternate screen buffer, so the scrollback is left untouched. The
+terminal is always restored on exit, including on
+.B SIGINT
+and
+.BR SIGTERM .
+The following keys act on the whole tree without leaving the view:
+.TP
+.B f
+Fetch all repositories from
+.IR origin .
+.TP
+.B p
+Fast\-forward pull all clean repositories.
+.TP
+.B s
+Open the branch picker, then switch all clean repositories to the chosen branch.
+The picker lists the recently active branches across all repositories, most
+recent first; type to filter, use the arrow keys to move the selection and
+Tab or Enter to choose. Esc cancels.
+.TP
+.B r
+Refresh now without waiting for the interval.
+.TP
+.BR q ", Ctrl\-C"
+Quit.
+.PP
+The automatic refresh and the
+.B r
+key re\-scan locally only; they do not fetch. The
+.B f
+and
+.B p
+keys require the
+.BR git (1)
+binary.
+.SH STATUS INDICATORS
+.TP
+.B \(ti
+Clean working tree.
+.TP
+.BI \(bu N
+.I N
+staged files.
+.TP
+.BI \(mu N
+.I N
+modified (unstaged) files.
+.TP
+.BI ? N
+.I N
+untracked files.
+.TP
+.BI \(ua N
+.I N
+commits ahead of the remote.
+.TP
+.BI \(da N
+.I N
+commits behind the remote.
+.TP
+.B \(ua\fIN\fB\(da\fIM\fR
+Diverged by
+.I N
+ahead and
+.I M
+behind.
+.TP
+.B \(==
+In sync with the remote.
+.TP
+.B ?
+No remote configured.
+.SH CONFIGURATION
+On start
+.B gitls
+reads
+.I ~/.gitlsrc
+(or the file named by
+.BR GITLS_CONFIG ).
+Command\-line flags always override the configuration. Recognised keys:
+.TP
+.B default_dir
+Directory to scan when none is given on the command line. Passing an explicit
+directory (including \(lq.\(rq) always overrides this.
+.TP
+.B max_depth
+Maximum directory recursion depth (default: 5).
+.TP
+.B skip_dirs
+Comma\-separated list of directory names to skip; glob patterns are supported.
+.TP
+.B watch_interval
+Default refresh interval in seconds for
+.BR \-w " (default: 3)."
+.TP
+.B dirty_only
+Set to
+.B true
+or
+.B 1
+to filter to dirty repositories by default, as if
+.B \-\-dirty
+were given. Override for a single run with
+.BR \-\-no\-dirty .
+.TP
+.B no_color
+Set to
+.B true
+or
+.B 1
+to disable colour output.
+.SH ENVIRONMENT
+.TP
+.B GITLS_CONFIG
+Path to an alternate configuration file, used instead of
+.IR ~/.gitlsrc .
+.TP
+.B COLUMNS
+Consulted as a fallback for the terminal width when it cannot be queried.
+.SH FILES
+.TP
+.I ~/.gitlsrc
+Per\-user configuration file.
+.SH EXIT STATUS
+Returns 0 on success and a non\-zero value on a usage error or a failure to
+initialise libgit2 or resolve the scan directory.
+.SH EXAMPLES
+.TP
+.B gitls ~/projects
+Show the status table for every repository under
+.IR ~/projects .
+.TP
+.B gitls \-w ~/projects
+Watch
+.I ~/projects
+live, refreshing every three seconds.
+.TP
+.B gitls \-\-dirty ~/projects
+List only the repositories that need attention.
+.TP
+.B gitls \-s main ~/projects
+Switch every clean repository to the
+.I main
+branch.
+.TP
+.B gitls fetch \-s feature\-x ~/projects
+Fetch, then switch to
+.IR feature\-x ,
+creating a local tracking branch where it only exists on the remote.
+.SH SEE ALSO
+.BR git (1)
+.SH AUTHOR
+Sven Siepermann <sven@siepermann.dev>
+.SH REPORTING BUGS
+Report issues at <https://github.com/sven42xyz/gitools/issues>.

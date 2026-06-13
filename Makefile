@@ -72,16 +72,21 @@ clean:
 	find . -name '*.d' -not -path './.git/*' -delete
 
 INSTALL_NAME ?= $(TARGET)
+MANDIR        = $(PREFIX)/share/man/man1
+DOCDIR        = $(PREFIX)/share/doc/$(TARGET)
 
 install: $(TARGET)
-	install -d $(PREFIX)/bin
-	install -m 755 $(TARGET) $(PREFIX)/bin/$(INSTALL_NAME)
-	install -d $(PREFIX)/share/doc/$(TARGET)
-	install -m 644 gitlsrc.example $(PREFIX)/share/doc/$(TARGET)/gitlsrc.example
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(INSTALL_NAME)
+	install -d $(DESTDIR)$(DOCDIR)
+	install -m 644 gitlsrc.example $(DESTDIR)$(DOCDIR)/gitlsrc.example
+	install -d $(DESTDIR)$(MANDIR)
+	install -m 644 gitls.1 $(DESTDIR)$(MANDIR)/$(INSTALL_NAME).1
 
 uninstall:
-	rm -f $(PREFIX)/bin/$(INSTALL_NAME)
-	rm -f $(PREFIX)/share/doc/$(TARGET)/gitlsrc.example
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(INSTALL_NAME)
+	rm -f $(DESTDIR)$(DOCDIR)/gitlsrc.example
+	rm -f $(DESTDIR)$(MANDIR)/$(INSTALL_NAME).1
 
 help:
 	@printf "Usage: make [TARGET] [VARIABLES]\n\n"

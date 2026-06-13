@@ -20,6 +20,8 @@ All notable changes to this project will be documented in this file.
   one-shot mode and under `-w`.
 - `~/.gitlsrc` keys `watch_interval` and `dirty_only`; CLI flags override them
   (`--no-dirty` opts out of `dirty_only` for a single run).
+- `gitls(1)` man page, installed by `make install` and packaged in the RPM. The
+  install/uninstall targets now honour `DESTDIR` for packaging.
 
 ### Fixed
 - Long branch names (or any over-wide row) no longer wrap and corrupt the table:

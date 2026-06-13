@@ -32,6 +32,8 @@ It also supports bulk branch switching with the -s flag.
 %license LICENSE
 %doc README.md NOTICE
 %{_bindir}/gitls
+%{_mandir}/man1/gitls.1*
+%{_datadir}/doc/gitls/gitlsrc.example
 
 %changelog
 * Sat Mar 08 2026 Sven Siepermann <sven@siepermann.dev> - 0.3.1-1
