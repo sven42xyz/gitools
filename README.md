@@ -58,7 +58,7 @@ sudo make install        # installs to /usr/local/bin
 
 ## Usage
 
-```
+```text
 gitls [fetch|pull] [OPTIONS] [DIRECTORY]
 
 Subcommands:
@@ -66,15 +66,16 @@ Subcommands:
   pull         Fast-forward pull all clean repos
 
 Options:
-  -s <branch>  Switch all clean repos to <branch> if it exists
-  -d <n>       Max search depth (default: 5)
-  -w [n]       Watch mode: refresh the table every n seconds (default: 3)
-  --dirty      Only list repos that are not clean and in sync
-  -a           Include hidden directories
-  -v           Verbose: show all repos in summaries, not just changed ones
-  --no-color   Disable ANSI colours
-  --version    Show version
-  -h, --help   Show this help
+  -s <branch>      Switch all clean repos to <branch> if it exists
+  -d <n>           Max search depth (default: 5)
+  -w, --watch [n]  Watch mode: refresh the table every n seconds (default: 3)
+  --dirty          Only list repos that are not both clean and in sync
+  --no-dirty       Show all repos (overrides dirty_only from the config)
+  -a               Include hidden directories
+  -v               Verbose: show all repos in summaries, not just changed ones
+  --no-color       Disable ANSI colours
+  --version        Show version
+  -h, --help       Show this help
 ```
 
 ### Examples
@@ -115,7 +116,7 @@ gitls --no-color ~/projects
 
 `gitls fetch` fetches all repos from their `origin` remote and shows the updated ahead/behind status. By default, only fetched repos and errors are shown per line. Add `-v` to see all repos including up-to-date and no-remote ones.
 
-```
+```text
 gitls fetch ~/projects
 
 Fetch results:
@@ -132,7 +133,7 @@ Fetch results:
 
 `gitls pull` fast-forward-pulls all clean repos. Dirty repos are skipped; diverged repos are flagged.
 
-```
+```text
 gitls pull ~/projects
 
 Pull results:
@@ -165,7 +166,7 @@ gitls -w 10         # refresh every 10 seconds
 gitls -w --dirty    # only show repos that need attention, live
 ```
 
-```
+```text
 Scanned: /home/me/projects
 
   NAME            BRANCH     SYNC  WHEN         STATUS
@@ -198,7 +199,7 @@ tracking branch when switching to a branch that only exists on `origin`.
 Pressing `s` opens an interactive picker listing the **recently active
 branches** across all scanned repos, most recent first:
 
-```
+```text
   ... status table ...
 
   f fetch · p pull · s switch · r refresh · q quit
@@ -234,7 +235,7 @@ anything with staged, modified or untracked files, commits ahead/behind the
 remote, a diverged branch, or a detached `HEAD`. Clean, in-sync repos are
 hidden from the listing.
 
-```
+```text
 gitls --dirty ~/projects
 
   NAME            BRANCH     SYNC  WHEN         STATUS
@@ -252,7 +253,7 @@ so the totals stay honest. The filter works in one-shot mode and under `-w`.
 
 The `-s` flag switches all clean repositories to a target branch in one command.
 
-```
+```text
 gitls -s main ~/projects
 
 Switched to branch: main
@@ -279,7 +280,7 @@ Combine `fetch` with `-s` to switch to a branch that only exists on the remote.
 gitls fetches first, then switches — creating a local tracking branch automatically
 if the branch isn't present locally yet.
 
-```
+```text
 gitls fetch -s feature-x ~/projects
 
 Switched to branch: feature-x
@@ -326,7 +327,7 @@ no_color=false
 | `max_depth` | Maximum directory recursion depth | `5` |
 | `skip_dirs` | Comma-separated list of directory names to skip (glob patterns supported) | — |
 | `watch_interval` | Default refresh interval (seconds) for `-w` | `3` |
-| `dirty_only` | Set to `true` or `1` to filter to dirty repos by default (like `--dirty`) | `false` |
+| `dirty_only` | Set to `true` or `1` to filter to dirty repos by default (like `--dirty`; override per-run with `--no-dirty`) | `false` |
 | `no_color` | Set to `true` or `1` to disable colors | `false` |
 
 CLI flags always override the config file. Passing an explicit directory (including `.`) always overrides `default_dir`:

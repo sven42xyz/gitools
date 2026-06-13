@@ -18,7 +18,8 @@ All notable changes to this project will be documented in this file.
   modified / untracked files, ahead/behind, diverged or detached `HEAD`). The
   summary line still counts all scanned repos and appends `(N hidden)`. Works in
   one-shot mode and under `-w`.
-- `~/.gitlsrc` keys `watch_interval` and `dirty_only`; CLI flags override them.
+- `~/.gitlsrc` keys `watch_interval` and `dirty_only`; CLI flags override them
+  (`--no-dirty` opts out of `dirty_only` for a single run).
 
 ### Fixed
 - Long branch names (or any over-wide row) no longer wrap and corrupt the table:
