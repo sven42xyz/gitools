@@ -4,7 +4,7 @@
 
 A fast, minimal tool to inspect and act on multiple git repositories.
 
-![gitls demo](docs/demo.gif)
+![gitls demo](docs/switch-demo.gif)
 
 
 ## Features
