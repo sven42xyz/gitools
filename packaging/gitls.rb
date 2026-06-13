@@ -2,7 +2,7 @@ class Gitls < Formula
   desc "A fast, minimal tool to inspect and act on multiple git repositories"
   homepage "https://github.com/sven42xyz/gitools"
   url "https://github.com/sven42xyz/gitools/archive/refs/tags/v0.4.0.tar.gz"
-  sha256 "TBD_AFTER_TAG"  # update with: shasum -a 256 of the v0.4.0 tarball
+  sha256 "fdc616157331cd292c4a945078518eb64d31a05708ce112566f45e7cd3e1d2f9"
   license "MIT"
   head "https://github.com/sven42xyz/gitools.git", branch: "main"
 
