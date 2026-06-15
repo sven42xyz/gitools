@@ -71,8 +71,11 @@ void collect_path(const char *path) {
  * directories between abs_dir and the repo, joined with " > ". A repo that is a
  * direct child of abs_dir has no category and yields an empty string.
  *
- * e.g. abs_dir="/p/tt", repo_path="/p/tt/core/packages/auth" -> "core > packages"
- *      abs_dir="/p/tt", repo_path="/p/tt/foo"                -> ""
+ * The breadcrumb is the full parent path, segments joined with a chevron " › ":
+ *
+ *   abs_dir="/p/tt", repo_path="/p/tt/core/packages/auth" -> "core › packages"
+ *   abs_dir="/p/tt", repo_path="/p/tt/app/mobile/ios/api" -> "app › mobile › ios"
+ *   abs_dir="/p/tt", repo_path="/p/tt/foo"                -> ""
  */
 void repo_category(const char *abs_dir, const char *repo_path,
                    char *out, size_t n) {
@@ -91,17 +94,20 @@ void repo_category(const char *abs_dir, const char *repo_path,
     while (*rel == '/') rel++;             /* skip the separator(s) */
     if (*rel == '\0') return;              /* repo == abs_dir */
 
-    /* strip the repo's own folder (last segment) to get the breadcrumb */
+    /* strip the repo's own folder (last segment) to get the parent path */
     const char *last = strrchr(rel, '/');
     if (!last) return;                     /* direct child -> uncategorized */
-    size_t blen = (size_t)(last - rel);
+    size_t blen = (size_t)(last - rel);    /* parent path = rel[0 .. blen) */
 
-    /* copy breadcrumb, replacing each '/' with " > " */
+    /* copy the parent path, replacing each '/' with " › " (U+203A = E2 80 BA) */
     size_t o = 0;
     for (size_t i = 0; i < blen; i++) {
         if (rel[i] == '/') {
-            if (o + 3 < n) { out[o++] = ' '; out[o++] = '>'; out[o++] = ' '; }
-            else break;
+            if (o + 5 < n) {
+                out[o++] = ' ';
+                out[o++] = (char)0xE2; out[o++] = (char)0x80; out[o++] = (char)0xBA;
+                out[o++] = ' ';
+            } else break;
         } else {
             if (o + 1 < n) out[o++] = rel[i];
             else break;

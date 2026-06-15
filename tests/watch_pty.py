@@ -237,6 +237,8 @@ def main():
     check("footer shows keys + interval", "fetch" in first and "interval 5s" in first)
     check("footer omits directory", work not in first.split("interval")[-1])
     check("footer omits 'last scan'", "last scan" not in first)
+    # a/b are top-level repos (no categories) -> no nav hints in the footer
+    check("footer hides nav without categories", "expand" not in first)
     tail, status = w.finish()
     check("alternate screen left on quit", "\033[?1049l" in (first + tail))
     check("cursor shown on quit", "\033[?25h" in (first + tail))
@@ -324,25 +326,29 @@ def main():
 
     check("flat repo shown at top", "flat" in s1)
     check("flat repos sorted alphabetically", ordered(s1, ["alpha", "flat", "widget"]))
-    # category header interleaves alphabetically: core > packages sits between
+    # category header interleaves alphabetically: core › packages sits between
     # the "alpha" and "flat" repos, not in a separate block below them
     check("category interleaved alphabetically",
-          ordered(s1, ["alpha", "core > packages", "flat"]))
+          ordered(s1, ["alpha", "core › packages", "flat"]))
     check("single-repo folder folded to repo name", "widget" in s1 and "solo" not in s1)
-    check("category header shown", "core > packages" in s1)
+    check("category header shown", "core › packages" in s1)
     check("category header shows count", "(2)" in s1)
     check("nested repos hidden by default", "auth" not in s1)
     # aggregated folder status: dirty count on the header, ✓ when all clean
-    check("category aggregates dirty count", "●" in line_with(s1, "core > packages"))
+    check("category aggregates dirty count", "●" in line_with(s1, "core › packages"))
     check("clean category shows check", "✓" in line_with(s1, "lib (2)"))
     # folder status and top-level repo status share the same STATUS column
     status_col = line_with(s1, "STATUS").index("STATUS")
     check("folder status aligned to STATUS column",
-          line_with(s1, "core > packages").find("●") == status_col
+          line_with(s1, "core › packages").find("●") == status_col
           and line_with(s1, "lib (2)").find("✓") == status_col)
     check("top repo status aligned to STATUS column",
           line_with(s1, "alpha").find("✓") == status_col)
-    # header sits at row 1 (after "alpha"); one step down, then expand
+    # nav hints appear because categories exist
+    check("footer shows nav with categories", "expand" in s1)
+    # cursor starts unselected (-1): first ↓ selects row 0 (alpha), second ↓
+    # reaches the header at row 1, then Enter expands
+    w.send(b"\x1b[B"); w.drain(0.2)
     w.send(b"\x1b[B"); w.drain(0.2)
     w.send(b"\r")                      # enter: expand
     raw2 = w.drain(1.0)

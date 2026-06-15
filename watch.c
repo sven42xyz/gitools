@@ -269,11 +269,15 @@ static bool read_branch(char *out, size_t n) {
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
-static void print_footer(int interval_sec, const char *note) {
+static void print_footer(int interval_sec, const char *note, bool has_categories) {
     printf("%s\n", EOL());   /* blank separator line (cleared) */
-    printf("  %s\xe2\x86\x91/\xe2\x86\x93%s move · %s\xe2\x8f\x8e%s expand · "
-           "%sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit%s\n",
-           C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
+
+    /* navigation keys only make sense when there are collapsible categories */
+    printf("  ");
+    if (has_categories)
+        printf("%s\xe2\x86\x91/\xe2\x86\x93%s move · %s\xe2\x8f\x8e%s expand · ",
+               C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET));
+    printf("%sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit%s\n",
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), EOL());
@@ -528,7 +532,7 @@ void run_watch(const char *abs_dir) {
     char   branch[256] = "";
     char   note[128]   = "";
     KeySet expanded    = { 0 };   /* categories the user has opened */
-    int    cursor      = 0;       /* selected visible row, -1 = none */
+    int    cursor      = -1;      /* selected visible row, -1 = no highlight yet */
 
     while (!g_watch_stop) {
         /* free the previous tick's scan here (not before the wait) so g_paths
@@ -588,9 +592,10 @@ void run_watch(const char *abs_dir) {
 
         for (;;) {
             build_visrows();
-            if (g_row_count == 0)                     cursor = -1;
-            else if (cursor < 0)                      cursor = 0;
-            else if ((size_t)cursor >= g_row_count)   cursor = (int)g_row_count - 1;
+            /* cursor may be -1 (no selection until the first arrow key); compare
+             * as int so -1 isn't promoted to a huge size_t and clamped to the end */
+            if (g_row_count == 0)                      cursor = -1;
+            else if (cursor >= (int)g_row_count)       cursor = (int)g_row_count - 1;
 
             /* redraw in place: home, draw (each line cleared to its end via EOL
              * so a narrower frame leaves no stale columns), then clear the rest */
@@ -600,7 +605,7 @@ void run_watch(const char *abs_dir) {
                    tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir, EOL(), EOL());
             print_grouped_table(&w, opt_dirty_only, g_groups, g_group_count,
                                 g_rows, g_row_count, cursor);
-            print_footer(opt_watch_interval, note);
+            print_footer(opt_watch_interval, note, g_group_count > 1);
             printf(CLEAR_TO_END);
             fflush(stdout);
 
@@ -618,11 +623,13 @@ void run_watch(const char *abs_dir) {
             if (ev == EV_TIMEOUT) { note[0] = '\0'; break; }
 
             if (k == K_UP) {
-                if (cursor > 0) cursor--;
+                if (cursor < 0)      cursor = (int)g_row_count - 1;  /* enter from bottom */
+                else if (cursor > 0) cursor--;
                 continue;
             }
             if (k == K_DOWN) {
-                if (cursor >= 0 && (size_t)cursor + 1 < g_row_count) cursor++;
+                if (cursor < 0)                             cursor = 0;  /* enter from top */
+                else if ((size_t)cursor + 1 < g_row_count)  cursor++;
                 continue;
             }
             if (k == K_ENTER) {

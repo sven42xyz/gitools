@@ -95,10 +95,10 @@ static void test_repo_category(void) {
     CHECK("one level -> single segment",    strcmp(out, "core") == 0);
 
     repo_category("/p/tt", "/p/tt/core/packages/auth", out, sizeof(out));
-    CHECK("two levels -> joined breadcrumb", strcmp(out, "core > packages") == 0);
+    CHECK("two levels -> chevron breadcrumb", strcmp(out, "core \xe2\x80\xba packages") == 0);
 
     repo_category("/p/tt", "/p/tt/a/b/c/d", out, sizeof(out));
-    CHECK("three levels",                    strcmp(out, "a > b > c") == 0);
+    CHECK("full breadcrumb, chevron joins",  strcmp(out, "a \xe2\x80\xba b \xe2\x80\xba c") == 0);
 
     /* trailing slash on abs_dir must not shift the boundary */
     repo_category("/p/tt/", "/p/tt/core/auth", out, sizeof(out));
