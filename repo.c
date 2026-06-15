@@ -66,6 +66,50 @@ void collect_path(const char *path) {
     g_path_count++;
 }
 
+/*
+ * Derive a repo's category key relative to abs_dir: the breadcrumb of parent
+ * directories between abs_dir and the repo, joined with " > ". A repo that is a
+ * direct child of abs_dir has no category and yields an empty string.
+ *
+ * e.g. abs_dir="/p/tt", repo_path="/p/tt/core/packages/auth" -> "core > packages"
+ *      abs_dir="/p/tt", repo_path="/p/tt/foo"                -> ""
+ */
+void repo_category(const char *abs_dir, const char *repo_path,
+                   char *out, size_t n) {
+    if (n == 0) return;
+    out[0] = '\0';
+
+    size_t dlen = strlen(abs_dir);
+    /* ignore a trailing slash on abs_dir so the prefix check is exact */
+    while (dlen > 0 && abs_dir[dlen - 1] == '/') dlen--;
+
+    /* repo_path must sit under abs_dir, on a path-segment boundary */
+    if (strncmp(repo_path, abs_dir, dlen) != 0) return;
+    if (repo_path[dlen] != '/' && repo_path[dlen] != '\0') return;
+
+    const char *rel = repo_path + dlen;
+    while (*rel == '/') rel++;             /* skip the separator(s) */
+    if (*rel == '\0') return;              /* repo == abs_dir */
+
+    /* strip the repo's own folder (last segment) to get the breadcrumb */
+    const char *last = strrchr(rel, '/');
+    if (!last) return;                     /* direct child -> uncategorized */
+    size_t blen = (size_t)(last - rel);
+
+    /* copy breadcrumb, replacing each '/' with " > " */
+    size_t o = 0;
+    for (size_t i = 0; i < blen; i++) {
+        if (rel[i] == '/') {
+            if (o + 3 < n) { out[o++] = ' '; out[o++] = '>'; out[o++] = ' '; }
+            else break;
+        } else {
+            if (o + 1 < n) out[o++] = rel[i];
+            else break;
+        }
+    }
+    out[o] = '\0';
+}
+
 /* ── Repo array (pre-allocated before threading) ───────────────────────────── */
 Repo  *g_repos     = NULL;
 size_t g_repo_count = 0;

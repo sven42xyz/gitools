@@ -193,7 +193,8 @@ ColWidths compute_col_widths(void) {
     int tw = term_width();
     if (tw > 0) {
         const int status_reserve = 14;   /* room for e.g. ●9 ✗9 ?9 */
-        int other = 2 + 2 + 2 + 2 + 2 + w.sync + w.time + status_reserve;
+        const int group_indent   = 2;    /* repos nested under a category header */
+        int other = 2 + group_indent + 2 + 2 + 2 + 2 + w.sync + w.time + status_reserve;
         int avail = tw - other;          /* budget shared by NAME + BRANCH */
         if (avail < 10) avail = 10;
         while (w.name + w.branch > avail) {
@@ -229,14 +230,27 @@ void print_header(const ColWidths *w) {
 }
 
 /* ── Single repo row ───────────────────────────────────────────────────────── */
-void print_repo(const Repo *r, const ColWidths *w) {
+/*
+ * Render one repo row. `selected` draws a cursor caret in the lead column (used
+ * by the watch-mode grouped view); `indent` nests the name under a category
+ * header. The indent is absorbed into the NAME column (not prepended to the
+ * whole row), so the BRANCH/SYNC/WHEN/STATUS columns stay aligned with
+ * un-indented top-level repo rows.
+ */
+static void print_repo_line(const Repo *r, const ColWidths *w,
+                            bool selected, int indent) {
     int is_dirty = (r->staged || r->modified || r->untracked);
 
     const char *name = strrchr(r->path, '/');
     name = name ? name + 1 : r->path;
 
-    printf("  %s", C(COL_CYAN));
-    write_col(name, w->name);
+    /* lead column (2 cols): cursor caret when selected, else blank */
+    if (selected) printf("%s\xe2\x96\xb8%s ", C(COL_GREEN), C(COL_RESET));
+    else          printf("  ");
+    for (int i = 0; i < indent; i++) putchar(' ');
+
+    printf("%s", C(COL_CYAN));
+    write_col(name, w->name - indent);   /* indent eats into the NAME column width */
     printf("%s  ", C(COL_RESET));
 
     printf("%s", C(is_dirty ? COL_YELLOW : COL_GREEN));
@@ -257,6 +271,71 @@ void print_repo(const Repo *r, const ColWidths *w) {
         if (r->modified)  printf("%s✗%d%s ", C(COL_RED),     r->modified,  C(COL_RESET));
         if (r->untracked) printf("%s?%d%s",  C(COL_MAGENTA), r->untracked, C(COL_RESET));
     }
+    printf("%s\n", EOL());
+}
+
+void print_repo(const Repo *r, const ColWidths *w) {
+    print_repo_line(r, w, false, 0);
+}
+
+/* ── Category header row ───────────────────────────────────────────────────── */
+/*
+ * Render a collapsible category header. The breadcrumb + count spans the
+ * NAME/BRANCH/SYNC/WHEN columns and is padded (or truncated with '~') so the
+ * aggregated status lands in the same STATUS column as the repo rows below it.
+ * Status is a single ✓ when every repo is clean and in sync, otherwise per-state
+ * repo counts (↑ ahead · ↓ behind · ● dirty).
+ */
+static void print_group_header(const Group *g, const ColWidths *w, bool selected) {
+    const char *arrow = g->expanded ? "\xe2\x96\xbc" : "\xe2\x96\xb6";  /* ▼ / ▶ */
+
+    if (selected) printf("%s\xe2\x96\xb8%s ", C(COL_GREEN), C(COL_RESET));
+    else          printf("  ");
+
+    /* width of everything between the lead and the STATUS column */
+    int block_w = w->name + 2 + w->branch + 2 + w->sync + 2 + w->time + 2;
+
+    char count[32];
+    snprintf(count, sizeof(count), "(%zu)", g->count);
+    int count_w = utf8_width(count);
+
+    /* label = "▶ " (2) + key + " " (1) + count; fit the key into what's left */
+    int key_budget = block_w - (2 + 1 + count_w);
+    if (key_budget < 1) key_budget = 1;
+
+    const char *key = g->key;
+    char kbuf[PATH_MAX];
+    int key_w = utf8_width(key);
+    if (key_w > key_budget) {                       /* truncate, '~' marks the cut */
+        size_t bl = utf8_byte_len_for_width(key, key_budget - 1);
+        memcpy(kbuf, key, bl);
+        kbuf[bl] = '~';
+        kbuf[bl + 1] = '\0';
+        key = kbuf;
+        key_w = key_budget;
+    }
+
+    /* cyan + bold: same hue as the repo-name rows, just bold so the folder
+     * header stays subtly distinct without standing out too much */
+    printf("%s%s%s %s%s %s%s%s",
+        C(COL_BOLD), C(COL_CYAN), arrow,
+        key, C(COL_RESET),
+        C(COL_DIM), count, C(COL_RESET));
+
+    int used = 2 + key_w + 1 + count_w;             /* arrow+space, key, space, count */
+    for (int i = used; i < block_w; i++) putchar(' ');
+
+    if (!g->n_dirty && !g->n_ahead && !g->n_behind) {
+        printf("%s\xe2\x9c\x93%s", C(COL_GREEN), C(COL_RESET));
+    } else {
+        if (g->n_ahead)
+            printf("%s\xe2\x86\x91%d%s ", C(COL_GREEN),  g->n_ahead,  C(COL_RESET));
+        if (g->n_behind)
+            printf("%s\xe2\x86\x93%d%s ", C(COL_YELLOW), g->n_behind, C(COL_RESET));
+        if (g->n_dirty)
+            printf("%s\xe2\x97\x8f%d%s",  C(COL_RED),    g->n_dirty,  C(COL_RESET));
+    }
+
     printf("%s\n", EOL());
 }
 
@@ -291,6 +370,55 @@ void print_status_table(const ColWidths *w, bool dirty_only) {
 
         if (dirty_only && !repo_is_dirty(r)) { hidden++; continue; }
         print_repo(r, w);
+    }
+
+    print_separator(w);
+    if (total == 0) {
+        printf("  No git repositories found.%s\n", EOL());
+    } else {
+        printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
+            C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
+            C(COL_GREEN), clean,  C(COL_RESET),
+            C(COL_RED),   dirty,  C(COL_RESET));
+        if (behind > 0)
+            printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
+        if (hidden > 0)
+            printf(" %s(%d hidden)%s", C(COL_DIM), hidden, C(COL_RESET));
+        printf("%s\n", EOL());
+    }
+}
+
+/* ── Grouped status table (watch mode) ─────────────────────────────────────── */
+/*
+ * Like print_status_table, but renders the pre-built visible-row list: flat
+ * uncategorized repos first, then a header per category with its repos shown
+ * only when expanded. `cursor` is the index into rows of the selected row
+ * (-1 for none). The summary line counts every repo, matching the flat table.
+ */
+void print_grouped_table(const ColWidths *w, bool dirty_only,
+                         const Group *groups, size_t ngroups,
+                         const VisRow *rows, size_t nrows, int cursor) {
+    (void)ngroups;
+    print_header(w);
+
+    for (size_t i = 0; i < nrows; i++) {
+        bool sel = ((int)i == cursor);
+        if (rows[i].kind == ROW_HEADER) {
+            print_group_header(&groups[rows[i].group_idx], w, sel);
+        } else {
+            int indent = rows[i].group_idx > 0 ? 2 : 0;
+            print_repo_line(&g_repos[rows[i].repo_idx], w, sel, indent);
+        }
+    }
+
+    /* summary counts every repo (independent of collapse / dirty filtering) */
+    int total = 0, clean = 0, dirty = 0, behind = 0, hidden = 0;
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        total++;
+        if (r->staged || r->modified || r->untracked) dirty++; else clean++;
+        if (r->behind > 0) behind++;
+        if (dirty_only && !repo_is_dirty(r)) hidden++;
     }
 
     print_separator(w);

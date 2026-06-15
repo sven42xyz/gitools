@@ -235,7 +235,7 @@ def main():
     check("alternate screen entered", "\033[?1049h" in first)
     check("cursor hidden", "\033[?25l" in first)
     check("footer shows keys + interval", "fetch" in first and "interval 5s" in first)
-    check("footer shows directory", work in first)
+    check("footer omits directory", work not in first.split("interval")[-1])
     check("footer omits 'last scan'", "last scan" not in first)
     tail, status = w.finish()
     check("alternate screen left on quit", "\033[?1049l" in (first + tail))
@@ -304,6 +304,63 @@ def main():
     check("narrowing branch leaves no stale columns", long_branch[:12] not in screen)
     check("exactly one header row after switch", len(headers) == 1)
     subprocess.run(["rm", "-rf", wide])
+
+    # ── 6. nested repos collapse under a category header ──
+    grp = tempfile.mkdtemp(prefix="gitls-grp-")
+    make_repo(os.path.join(grp, "flat"))
+    make_repo(os.path.join(grp, "alpha"))                       # sorts before flat
+    make_repo(os.path.join(grp, "core", "packages", "auth"))
+    make_repo(os.path.join(grp, "core", "packages", "api"))
+    open(os.path.join(grp, "core", "packages", "api", "scratch"), "w").write("x")  # dirty
+    make_repo(os.path.join(grp, "lib", "a"))                    # all-clean category
+    make_repo(os.path.join(grp, "lib", "b"))
+    make_repo(os.path.join(grp, "solo", "widget"))             # lone repo -> folded flat
+    w = Watcher(grp)
+    raw = w.drain(1.5)
+    s1 = (lambda t: (t.feed(raw), t.text())[1])(Term())
+
+    def line_with(text, needle):
+        return next((l for l in text.splitlines() if needle in l), "")
+
+    check("flat repo shown at top", "flat" in s1)
+    check("flat repos sorted alphabetically", ordered(s1, ["alpha", "flat", "widget"]))
+    # category header interleaves alphabetically: core > packages sits between
+    # the "alpha" and "flat" repos, not in a separate block below them
+    check("category interleaved alphabetically",
+          ordered(s1, ["alpha", "core > packages", "flat"]))
+    check("single-repo folder folded to repo name", "widget" in s1 and "solo" not in s1)
+    check("category header shown", "core > packages" in s1)
+    check("category header shows count", "(2)" in s1)
+    check("nested repos hidden by default", "auth" not in s1)
+    # aggregated folder status: dirty count on the header, ✓ when all clean
+    check("category aggregates dirty count", "●" in line_with(s1, "core > packages"))
+    check("clean category shows check", "✓" in line_with(s1, "lib (2)"))
+    # folder status and top-level repo status share the same STATUS column
+    status_col = line_with(s1, "STATUS").index("STATUS")
+    check("folder status aligned to STATUS column",
+          line_with(s1, "core > packages").find("●") == status_col
+          and line_with(s1, "lib (2)").find("✓") == status_col)
+    check("top repo status aligned to STATUS column",
+          line_with(s1, "alpha").find("✓") == status_col)
+    # header sits at row 1 (after "alpha"); one step down, then expand
+    w.send(b"\x1b[B"); w.drain(0.2)
+    w.send(b"\r")                      # enter: expand
+    raw2 = w.drain(1.0)
+    s2 = (lambda t: (t.feed(raw + raw2), t.text())[1])(Term())
+    check("nested repos shown after expand", "auth" in s2)
+    # the indent of a nested repo is absorbed into the NAME column, so its
+    # BRANCH/SYNC/WHEN/STATUS align with un-indented top-level repo rows
+    status_col2 = line_with(s2, "STATUS").index("STATUS")
+    check("nested repo status aligned with top-level",
+          line_with(s2, "auth").find("✓") == status_col2
+          and line_with(s2, "alpha").find("✓") == status_col2)
+    # collapse again
+    w.send(b"\r")
+    raw3 = w.drain(1.0)
+    s3 = (lambda t: (t.feed(raw + raw2 + raw3), t.text())[1])(Term())
+    check("nested repos hidden after re-collapse", "auth" not in s3)
+    w.finish()
+    subprocess.run(["rm", "-rf", grp])
 
     subprocess.run(["rm", "-rf", work])
     print(f"\n{passed} passed, {failed} failed")

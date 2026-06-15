@@ -79,6 +79,31 @@ typedef struct {
     char         net_error[256];   /* libgit2 error message on fetch/pull failure */
 } Repo;
 
+/* ── Watch-mode grouping ───────────────────────────────────────────────────── */
+/*
+ * Repos are bucketed by their category (breadcrumb relative to the scan root,
+ * see repo_category). The bucket with key "" holds uncategorized repos (direct
+ * children of the root) and is rendered flat; every other bucket gets a
+ * collapsible header row.
+ */
+typedef struct {
+    char    key[PATH_MAX];   /* "core > packages"; "" = uncategorized */
+    int    *repo_idx;        /* indices into g_repos */
+    size_t  count;
+    size_t  cap;
+    int     n_dirty;         /* repos with staged/modified/untracked changes */
+    int     n_ahead;         /* repos ahead of their remote */
+    int     n_behind;        /* repos behind their remote */
+    bool    expanded;
+} Group;
+
+typedef enum { ROW_REPO, ROW_HEADER } RowKind;
+typedef struct {
+    RowKind kind;
+    int     repo_idx;        /* valid for ROW_REPO */
+    int     group_idx;       /* group the row belongs to (0 = uncategorized) */
+} VisRow;
+
 /* ── Global options (defined in main.c) ───────────────────────────────────── */
 extern int    opt_max_depth;
 extern bool   opt_all;
@@ -112,6 +137,8 @@ void load_config(void);
 void resolve_git_path(void);
 int  git_available(void);
 void collect_path(const char *path);
+void repo_category(const char *abs_dir, const char *repo_path,
+                   char *out, size_t n);
 void process_all_repos(const char *dir);
 void free_repo_collection(void);
 void collect_recent_branches(void);
@@ -131,6 +158,9 @@ void        print_header(const ColWidths *w);
 void        print_repo(const Repo *r, const ColWidths *w);
 bool        repo_is_dirty(const Repo *r);
 void        print_status_table(const ColWidths *w, bool dirty_only);
+void        print_grouped_table(const ColWidths *w, bool dirty_only,
+                                const Group *groups, size_t ngroups,
+                                const VisRow *rows, size_t nrows, int cursor);
 void        print_switch_summary(const ColWidths *w);
 void        print_fetch_summary(const ColWidths *w);
 void        print_pull_summary(const ColWidths *w);
