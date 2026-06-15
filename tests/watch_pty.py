@@ -368,6 +368,25 @@ def main():
     w.finish()
     subprocess.run(["rm", "-rf", grp])
 
+    # ── 7. a long breadcrumb overflows the row instead of widening NAME ──
+    deep = tempfile.mkdtemp(prefix="gitls-deep-")
+    make_repo(os.path.join(deep, "x"))                 # short top-level repo
+    crumb = ["platform", "services", "authentication", "backend"]
+    make_repo(os.path.join(deep, *crumb, "one"))
+    make_repo(os.path.join(deep, *crumb, "two"))
+    w = Watcher(deep)
+    raw = w.drain(1.5)
+    sd = (lambda t: (t.feed(raw), t.text())[1])(Term())
+    header = " › ".join(crumb)                     # "platform › … › backend"
+    check("long breadcrumb shown in full (no ~)", header in sd and "~" not in sd)
+    col = line_with(sd, "STATUS").index("STATUS")
+    # the NAME column is sized to the short repo names, not the breadcrumb: the
+    # repo status stays in the STATUS column while the header status overflows it
+    check("repo status stays in STATUS column", line_with(sd, " x ").find("✓") == col)
+    check("long breadcrumb overflows past STATUS", line_with(sd, "backend").find("✓") > col)
+    w.finish()
+    subprocess.run(["rm", "-rf", deep])
+
     subprocess.run(["rm", "-rf", work])
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0

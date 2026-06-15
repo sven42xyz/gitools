@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
     process_all_repos(abs_dir);
     spinner_stop();
 
-    ColWidths w = compute_col_widths();
+    ColWidths w = compute_col_widths(0);
 
     /* ── status table header ── */
     int tw = term_width();

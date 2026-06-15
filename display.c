@@ -162,13 +162,49 @@ static void write_sync(const Repo *r, int width) {
 }
 
 /* ── Dynamic column widths ──────────────────────────────────────────────────── */
-ColWidths compute_col_widths(void) {
+/* Number of decimal digits in a non-negative int (for STATUS-width sizing). */
+static int digits10(int n) {
+    int w = 1;
+    while (n >= 10) { n /= 10; w++; }
+    return w;
+}
+
+/* Display width of a repo's STATUS cell: "✓" when clean, else ●staged ✗mod ?untr. */
+static int repo_status_width(const Repo *r) {
+    if (!(r->staged || r->modified || r->untracked)) return 1;   /* ✓ */
+    int w = 0;
+    if (r->staged)    w += 1 + digits10(r->staged)    + 1;       /* "●N " */
+    if (r->modified)  w += 1 + digits10(r->modified)  + 1;       /* "✗N " */
+    if (r->untracked) w += 1 + digits10(r->untracked);          /* "?N"  */
+    return w;
+}
+
+/* Display width of a category header's aggregated STATUS cell (✓ or ↑N ↓N ●N). */
+int group_status_width(const Group *g) {
+    if (!g->n_dirty && !g->n_ahead && !g->n_behind) return 1;    /* ✓ */
+    int w = 0;
+    if (g->n_ahead)  w += 1 + digits10(g->n_ahead)  + 1;
+    if (g->n_behind) w += 1 + digits10(g->n_behind) + 1;
+    if (g->n_dirty)  w += 1 + digits10(g->n_dirty);
+    return w;
+}
+
+/*
+ * Column widths are sized to the content, never stretched to fill the screen.
+ * The NAME column tracks the repo names only — category header breadcrumbs span
+ * the whole row at render time, so they don't widen it. min_status_w lets the
+ * watch view reserve room for the widest header status aggregate, and the cap
+ * uses the *actual* STATUS width rather than a fixed guess, so names are only
+ * '~'-truncated when the terminal really is too narrow. Pass 0 when unused.
+ */
+ColWidths compute_col_widths(int min_status_w) {
     ColWidths w = {
         .name   = (int)strlen("NAME"),
         .branch = (int)strlen("BRANCH"),
         .sync   = (int)strlen("SYNC"),
         .time   = (int)strlen("WHEN"),
     };
+    int status_w = MAX(min_status_w, (int)strlen("STATUS"));
     for (size_t i = 0; i < g_repo_count; i++) {
         const Repo *r = &g_repos[i];
 
@@ -184,6 +220,8 @@ ColWidths compute_col_widths(void) {
         w.sync = MAX(w.sync, utf8_width(sync_buf));
 
         w.time = MAX(w.time, utf8_width(relative_time(r->last_commit)));
+
+        status_w = MAX(status_w, repo_status_width(r));
     }
 
     /* Cap the variable NAME / BRANCH columns so a single row never exceeds the
@@ -192,9 +230,8 @@ ColWidths compute_col_widths(void) {
      * The layout is: 2(lead) + name +2 + branch +2 + sync +2 + time +2 + STATUS. */
     int tw = term_width();
     if (tw > 0) {
-        const int status_reserve = 14;   /* room for e.g. ●9 ✗9 ?9 */
-        const int group_indent   = 2;    /* repos nested under a category header */
-        int other = 2 + group_indent + 2 + 2 + 2 + 2 + w.sync + w.time + status_reserve;
+        const int group_indent = (min_status_w > 0) ? 2 : 0;  /* nested-repo indent */
+        int other = 2 + group_indent + 2 + 2 + 2 + 2 + w.sync + w.time + status_w;
         int avail = tw - other;          /* budget shared by NAME + BRANCH */
         if (avail < 10) avail = 10;
         while (w.name + w.branch > avail) {
@@ -280,11 +317,12 @@ void print_repo(const Repo *r, const ColWidths *w) {
 
 /* ── Category header row ───────────────────────────────────────────────────── */
 /*
- * Render a collapsible category header. The breadcrumb + count spans the
- * NAME/BRANCH/SYNC/WHEN columns and is padded (or truncated with '~') so the
- * aggregated status lands in the same STATUS column as the repo rows below it.
- * Status is a single ✓ when every repo is clean and in sync, otherwise per-state
- * repo counts (↑ ahead · ↓ behind · ● dirty).
+ * Render a collapsible category header. The breadcrumb + count is laid out
+ * across the row without widening the NAME column the repos use: its status
+ * sits in the STATUS column (aligned with the repos) when the breadcrumb is
+ * short enough, and overflows past it — up to the terminal edge, then '~'-cut —
+ * when the breadcrumb is long. Status is a single ✓ when every repo is clean and
+ * in sync, otherwise per-state repo counts (↑ ahead · ↓ behind · ● dirty).
  */
 static void print_group_header(const Group *g, const ColWidths *w, bool selected) {
     const char *arrow = g->expanded ? "\xe2\x96\xbc" : "\xe2\x96\xb6";  /* ▼ / ▶ */
@@ -292,20 +330,33 @@ static void print_group_header(const Group *g, const ColWidths *w, bool selected
     if (selected) printf("%s\xe2\x96\xb8%s ", C(COL_GREEN), C(COL_RESET));
     else          printf("  ");
 
-    /* width of everything between the lead and the STATUS column */
+    /* repo STATUS column position (cols after the lead) — aligns when it fits */
     int block_w = w->name + 2 + w->branch + 2 + w->sync + 2 + w->time + 2;
 
     char count[32];
     snprintf(count, sizeof(count), "(%zu)", g->count);
-    int count_w = utf8_width(count);
+    int count_w   = utf8_width(count);
+    int label_min = 2 + 1 + count_w;                /* "▶ " + " " + count */
+    int key_w     = utf8_width(g->key);
+    int status_w  = group_status_width(g);
 
-    /* label = "▶ " (2) + key + " " (1) + count; fit the key into what's left */
-    int key_budget = block_w - (2 + 1 + count_w);
+    /* status position: aligned at block_w, else just past the label; clamped so
+     * the status still fits before the terminal edge (room for a 2-col gap) */
+    int status_pos = block_w;
+    if (label_min + key_w + 2 > status_pos) status_pos = label_min + key_w + 2;
+    int tw = term_width();
+    if (tw > 0) {
+        int max_pos = tw - 2 /*lead*/ - status_w;
+        if (max_pos < label_min + 2) max_pos = label_min + 2;
+        if (status_pos > max_pos) status_pos = max_pos;
+    }
+
+    /* fit the breadcrumb into status_pos, leaving a 2-col gap before the status */
+    int key_budget = (status_pos - 2) - label_min;
     if (key_budget < 1) key_budget = 1;
 
     const char *key = g->key;
     char kbuf[PATH_MAX];
-    int key_w = utf8_width(key);
     if (key_w > key_budget) {                       /* truncate, '~' marks the cut */
         size_t bl = utf8_byte_len_for_width(key, key_budget - 1);
         memcpy(kbuf, key, bl);
@@ -322,8 +373,8 @@ static void print_group_header(const Group *g, const ColWidths *w, bool selected
         key, C(COL_RESET),
         C(COL_DIM), count, C(COL_RESET));
 
-    int used = 2 + key_w + 1 + count_w;             /* arrow+space, key, space, count */
-    for (int i = used; i < block_w; i++) putchar(' ');
+    int used = label_min + key_w;                   /* arrow+space, key, space, count */
+    for (int i = used; i < status_pos; i++) putchar(' ');
 
     if (!g->n_dirty && !g->n_ahead && !g->n_behind) {
         printf("%s\xe2\x9c\x93%s", C(COL_GREEN), C(COL_RESET));

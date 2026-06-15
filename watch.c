@@ -581,8 +581,13 @@ void run_watch(const char *abs_dir) {
         opt_fetch = opt_pull = opt_switch = false;
         action = 0;
 
-        ColWidths w = compute_col_widths();
         build_groups(abs_dir, opt_dirty_only, &expanded);
+        /* size the STATUS column for the widest header aggregate (breadcrumbs
+         * don't widen NAME — they span the row at render time) */
+        int max_status = 0;
+        for (size_t gi = 1; gi < g_group_count; gi++)
+            max_status = MAX(max_status, group_status_width(&g_groups[gi]));
+        ColWidths w = compute_col_widths(max_status);
 
         /* inner loop: re-render on cursor moves and expand/collapse without
          * rescanning; break out to rescan on the interval, 'r', or an action */
