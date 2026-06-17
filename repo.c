@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/wait.h>
 
 extern char **environ;
@@ -448,17 +449,30 @@ static int run_git_capture(const char **argv, char *buf, size_t n) {
     close(pfd[1]);
     size_t total = 0;
     if (buf && n > 0) {
-        ssize_t nr;
-        while (total + 1 < n &&
-               (nr = read(pfd[0], buf + total, n - total - 1)) > 0)
-            total += (size_t)nr;
+        /* Read until the buffer is full or the child closes the pipe. Retry on
+         * EINTR: bailing out early would leave the child blocked on a full pipe
+         * and deadlock the waitpid() below. */
+        while (total + 1 < n) {
+            ssize_t nr = read(pfd[0], buf + total, n - total - 1);
+            if (nr > 0)            total += (size_t)nr;
+            else if (nr < 0 && errno == EINTR) continue;
+            else                   break;   /* EOF or hard error */
+        }
         buf[total] = '\0';
         /* strip trailing newlines */
         while (total > 0 && (buf[total-1] == '\n' || buf[total-1] == '\r'))
             buf[--total] = '\0';
     }
-    /* drain remaining output */
-    { char tmp[256]; while (read(pfd[0], tmp, sizeof(tmp)) > 0) {} }
+    /* drain remaining output so the child never blocks on a full pipe */
+    {
+        char tmp[256];
+        for (;;) {
+            ssize_t nr = read(pfd[0], tmp, sizeof(tmp));
+            if (nr > 0) continue;
+            if (nr < 0 && errno == EINTR) continue;
+            break;
+        }
+    }
     close(pfd[0]);
 
     int status = 0;
@@ -474,7 +488,9 @@ static FetchResult do_fetch(git_repository *repo, Repo *r) {
         return FR_NO_REMOTE;
     git_remote_free(remote);
 
-    /* snapshot the remote-tracking ref before fetching so we can detect changes */
+    /* snapshot the remote-tracking ref before fetching so we can detect changes.
+     * Note: this only tracks the *current* branch's remote ref, so a fetch that
+     * updates only other branches or tags is still reported as FR_UP_TO_DATE. */
     char refspec[320] = "";
     char ref_before[128] = "";
     bool have_before = false;

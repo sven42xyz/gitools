@@ -34,6 +34,7 @@
 static struct termios       g_orig_termios;
 static int                  g_termios_saved = 0;
 static volatile sig_atomic_t g_watch_stop   = 0;
+static volatile sig_atomic_t g_winch        = 0;   /* set by SIGWINCH (terminal resize) */
 
 static void write_seq(const char *s) {
     /* write() is async-signal-safe, so this is callable from restore_terminal */
@@ -54,6 +55,11 @@ static void restore_terminal(void) {
 static void on_signal(int sig) {
     (void)sig;
     g_watch_stop = 1;
+}
+
+static void on_winch(int sig) {
+    (void)sig;
+    g_winch = 1;
 }
 
 /* Put stdin into cbreak/raw mode: no canonical line buffering, no echo. */
@@ -81,12 +87,14 @@ typedef enum {
     EV_TIMEOUT,   /* interval elapsed — refresh */
     EV_QUIT,      /* user asked to quit */
     EV_KEY,       /* a key was pressed (see *key_out / *ch_out) */
+    EV_RESIZE,    /* terminal was resized — recompute widths and redraw */
 } WatchEvent;
 
 /*
  * Block up to timeout_ms milliseconds. Returns EV_TIMEOUT when it elapses,
- * EV_QUIT on 'q'/'Q'/Ctrl-C or a stop signal, or EV_KEY with the decoded
- * logical key in *key_out (and the byte in *ch_out for K_CHAR).
+ * EV_QUIT on 'q'/'Q'/Ctrl-C or a stop signal, EV_RESIZE on a terminal resize,
+ * or EV_KEY with the decoded logical key in *key_out (and the byte in *ch_out
+ * for K_CHAR).
  */
 static WatchEvent wait_for_event(int timeout_ms, Key *key_out, char *ch_out) {
     struct timespec start;
@@ -95,6 +103,7 @@ static WatchEvent wait_for_event(int timeout_ms, Key *key_out, char *ch_out) {
 
     for (;;) {
         if (g_watch_stop) return EV_QUIT;
+        if (g_winch) { g_winch = 0; return EV_RESIZE; }
 
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -526,6 +535,10 @@ void run_watch(const char *abs_dir) {
     sigaction(SIGINT,  &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
+    struct sigaction wa = { 0 };
+    wa.sa_handler = on_winch;
+    sigaction(SIGWINCH, &wa, NULL);
+
     write_seq(ALT_SCREEN_ON);
     write_seq(CURSOR_HIDE);
     enter_raw_mode();
@@ -580,6 +593,26 @@ void run_watch(const char *abs_dir) {
         process_all_repos(abs_dir);
         if (spinning) spinner_stop();
 
+        /* footer note: report the outcome now that results are in, so a failed
+         * action reads "… failed" rather than falsely confirming success */
+        if (action) {
+            int failed = 0;
+            for (size_t i = 0; i < g_repo_count; i++) {
+                if (action == 'f' && g_repos[i].fetch_result  == FR_ERROR) failed++;
+                if (action == 'p' && g_repos[i].pull_result   == PR_ERROR) failed++;
+                if (action == 's' && g_repos[i].switch_result == SR_ERROR) failed++;
+            }
+            const char *msg = NULL;
+            if (action == 'f')      msg = failed ? "fetch failed"  : "fetched";
+            else if (action == 'p') msg = failed ? "pull failed"   : "pulled";
+            if (msg)
+                snprintf(note, sizeof(note), "%s", msg);
+            else if (failed)        /* switch */
+                snprintf(note, sizeof(note), "switch failed");
+            else
+                snprintf(note, sizeof(note), "switched to %s", branch);
+        }
+
         /* clear one-shot action state so it does not repeat on the next tick */
         opt_fetch = opt_pull = opt_switch = false;
         action = 0;
@@ -629,6 +662,12 @@ void run_watch(const char *abs_dir) {
             WatchEvent ev = wait_for_event((int)remaining, &k, &ch);
             if (ev == EV_QUIT)    goto done;
             if (ev == EV_TIMEOUT) { note[0] = '\0'; break; }
+            if (ev == EV_RESIZE) {
+                /* resize the columns to the new terminal width without a rescan;
+                 * the redraw at the top of the loop picks up the new widths */
+                w = compute_col_widths(max_status);
+                continue;
+            }
 
             if (k == K_UP) {
                 if (cursor < 0)      cursor = (int)g_row_count - 1;  /* enter from bottom */
@@ -649,18 +688,16 @@ void run_watch(const char *abs_dir) {
                 continue;
             }
             if (k == K_CHAR) {
-                if (ch == 'f') { action = 'f';
-                    snprintf(note, sizeof(note), "fetched"); break; }
-                if (ch == 'p') { action = 'p';
-                    snprintf(note, sizeof(note), "pulled");  break; }
+                /* one-shot actions; the footer note is set after the scan
+                 * completes so it can reflect success vs failure */
+                if (ch == 'f') { action = 'f'; break; }
+                if (ch == 'p') { action = 'p'; break; }
                 if (ch == 's') {
                     /* g_paths is still populated — gather recent branches for
                      * the picker, then prompt */
                     collect_recent_branches();
-                    if (read_branch(branch, sizeof(branch))) {
+                    if (read_branch(branch, sizeof(branch)))
                         action = 's';
-                        snprintf(note, sizeof(note), "switched to %s", branch);
-                    }
                     free_recent_branches();
                     break;
                 }
