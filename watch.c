@@ -278,7 +278,14 @@ static bool read_branch(char *out, size_t n) {
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
-static void print_footer(int interval_sec, const char *note, bool has_categories) {
+/*
+ * has_git is false when no git binary was found: fetch/pull go through a git
+ * subprocess and would only ever fail, so their keys are dropped from the menu
+ * and the limitation is surfaced on the status line. (Switch uses libgit2
+ * directly, so it stays available either way.)
+ */
+static void print_footer(int interval_sec, const char *note,
+                         bool has_categories, bool has_git) {
     printf("%s\n", EOL());   /* blank separator line (cleared) */
 
     /* navigation keys only make sense when there are collapsible categories */
@@ -286,14 +293,18 @@ static void print_footer(int interval_sec, const char *note, bool has_categories
     if (has_categories)
         printf("%s\xe2\x86\x91/\xe2\x86\x93%s move · %s\xe2\x8f\x8e%s expand · ",
                C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET));
-    printf("%sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit%s\n",
-           C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
+    if (has_git)
+        printf("%sf%s fetch · %sp%s pull · ",
+               C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET));
+    printf("%ss%s switch · %sr%s refresh · %sq%s quit%s\n",
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), EOL());
 
     printf("  %sinterval %ds", C(COL_DIM), interval_sec);
     if (opt_dirty_only)
         printf(" · dirty only");   /* easy-to-forget filter, surfaced in the live view */
+    if (!has_git)
+        printf(" · git unavailable");
     if (note && note[0])
         printf(" · %s", note);
     printf("%s%s\n", C(COL_RESET), EOL());
@@ -550,6 +561,9 @@ void run_watch(const char *abs_dir) {
     KeySet expanded    = { 0 };   /* categories the user has opened */
     int    cursor      = -1;      /* selected visible row, -1 = no highlight yet */
 
+    /* git binary resolved once in main(); fetch/pull need it, switch does not */
+    const bool has_git = git_available();
+
     while (!g_watch_stop) {
         /* remember the selected row's identity (repo path / category key) so the
          * highlight follows the same item across the rescan, where the visible-
@@ -680,7 +694,7 @@ void run_watch(const char *abs_dir) {
                    tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir, EOL(), EOL());
             print_grouped_table(&w, opt_dirty_only, g_groups, g_group_count,
                                 g_rows, g_row_count, cursor);
-            print_footer(opt_watch_interval, note, g_group_count > 1);
+            print_footer(opt_watch_interval, note, g_group_count > 1, has_git);
             printf(CLEAR_TO_END);
             fflush(stdout);
 
@@ -723,9 +737,10 @@ void run_watch(const char *abs_dir) {
             }
             if (k == K_CHAR) {
                 /* one-shot actions; the footer note is set after the scan
-                 * completes so it can reflect success vs failure */
-                if (ch == 'f') { action = 'f'; break; }
-                if (ch == 'p') { action = 'p'; break; }
+                 * completes so it can reflect success vs failure. fetch/pull
+                 * need the git binary — ignored when it is unavailable. */
+                if (ch == 'f' && has_git) { action = 'f'; break; }
+                if (ch == 'p' && has_git) { action = 'p'; break; }
                 if (ch == 's') {
                     /* g_paths is still populated — gather recent branches for
                      * the picker, then prompt */

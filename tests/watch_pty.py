@@ -153,10 +153,13 @@ def current_branch(path):
 class Watcher:
     """Spawn gitls -w in a PTY and talk to it."""
 
-    def __init__(self, workdir, interval=5):
+    def __init__(self, workdir, interval=5, env=None):
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
-            os.execv(GITLS, [GITLS, "-w", str(interval), workdir])
+            if env is not None:
+                os.execve(GITLS, [GITLS, "-w", str(interval), workdir], env)
+            else:
+                os.execv(GITLS, [GITLS, "-w", str(interval), workdir])
             os._exit(127)
 
     def drain(self, seconds):
@@ -243,6 +246,19 @@ def main():
     check("alternate screen left on quit", "\033[?1049l" in (first + tail))
     check("cursor shown on quit", "\033[?25h" in (first + tail))
     check("clean exit on q", os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0)
+
+    # ── 1b. no-git footer: fetch/pull keys hidden when git is unavailable ──
+    # Point PATH at an empty dir so both git_installed() (popen) and
+    # resolve_git_path() find no git; switch (libgit2) stays available.
+    emptybin = os.path.join(work, "emptybin")
+    os.makedirs(emptybin, exist_ok=True)
+    wg = Watcher(work, env=dict(os.environ, PATH=emptybin))
+    nogit = wg.drain(1.5)
+    check("no-git footer omits fetch key", "fetch" not in nogit)
+    check("no-git footer omits pull key", "pull" not in nogit)
+    check("no-git footer keeps switch key", "switch" in nogit)
+    check("no-git footer notes git unavailable", "git unavailable" in nogit)
+    wg.finish()
 
     # ── 2. picker opens, recent-first ordering, drawn below the table ──
     w = Watcher(work)

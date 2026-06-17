@@ -331,6 +331,21 @@ else
     failed=$((failed + 1))
 fi
 
+# invalid max_depth values (non-numeric, overflow, negative) are rejected so the
+# default depth (5) still applies and the nested repo is found — guards the
+# errno/INT_MAX validation in config.c
+for bad in "abc" "999999999999999999999" "-3"; do
+    printf 'max_depth=%s\n' "$bad" > "$CFG"
+    out=$(GITLS_CONFIG="$CFG" "$GITLS" --no-color "$WORK/cfgtest" 2>&1)
+    if ! printf '%s' "$out" | grep -qF "No git repositories found"; then
+        printf "  ok  invalid max_depth='%s' ignored (default applies)\n" "$bad"
+        passed=$((passed + 1))
+    else
+        printf "FAIL  invalid max_depth='%s' ignored\n     got: %s\n" "$bad" "$out"
+        failed=$((failed + 1))
+    fi
+done
+
 # ── pull -s: rejected ─────────────────────────────────────────────────────────
 printf "\npull -s: rejected\n"
 D="$WORK/pull-s-reject"; mkgit "$D"
@@ -418,6 +433,18 @@ if printf '%s' "$out" | grep -qF "repo" && ! printf '%s' "$out" | grep -qF "othe
     printf "  ok  explicit . overrides default_dir\n"; passed=$((passed + 1))
 else
     printf "FAIL  explicit . overrides default_dir\n     got: %s\n" "$out"
+    failed=$((failed + 1))
+fi
+
+# bare "~" as default_dir expands to the home directory (not the literal "~",
+# which realpath() would reject). max_depth=0 keeps the home scan to a single
+# directory listing so the test stays fast; run from /tmp so no "~" file in cwd.
+printf 'default_dir=~\nmax_depth=0\n' > "$CFG"
+out=$(cd /tmp && GITLS_CONFIG="$CFG" "$GITLS" --no-color 2>&1)
+if ! printf '%s' "$out" | grep -qF "cannot resolve path"; then
+    printf "  ok  bare ~ default_dir expands to home\n"; passed=$((passed + 1))
+else
+    printf "FAIL  bare ~ default_dir expands to home\n     got: %s\n" "$out"
     failed=$((failed + 1))
 fi
 
