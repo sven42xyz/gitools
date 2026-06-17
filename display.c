@@ -404,6 +404,39 @@ bool repo_is_dirty(const Repo *r) {
     return false;
 }
 
+/* ── Summary line ──────────────────────────────────────────────────────────── */
+/*
+ * Trailing "N repos · N clean · N dirty …" line, counted over every repo
+ * regardless of collapse state or the dirty filter. When dirty_only is set,
+ * clean+in-sync repos are hidden from the listing but still counted here, and
+ * the count of hidden repos is appended as "(N hidden)". Shared by the flat and
+ * grouped tables so the wording stays in one place.
+ */
+static void print_summary(bool dirty_only) {
+    int total = 0, clean = 0, dirty = 0, behind = 0, hidden = 0;
+    for (size_t i = 0; i < g_repo_count; i++) {
+        const Repo *r = &g_repos[i];
+        total++;
+        if (r->staged || r->modified || r->untracked) dirty++; else clean++;
+        if (r->behind > 0) behind++;
+        if (dirty_only && !repo_is_dirty(r)) hidden++;
+    }
+
+    if (total == 0) {
+        printf("  No git repositories found.%s\n", EOL());
+        return;
+    }
+    printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
+        C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
+        C(COL_GREEN), clean,  C(COL_RESET),
+        C(COL_RED),   dirty,  C(COL_RESET));
+    if (behind > 0)
+        printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
+    if (hidden > 0)
+        printf(" %s(%d hidden)%s", C(COL_DIM), hidden, C(COL_RESET));
+    printf("%s\n", EOL());
+}
+
 /* ── Status table ──────────────────────────────────────────────────────────── */
 /* basename of a repo path (the segment after the last '/'). */
 static const char *path_basename(const char *path) {
@@ -436,32 +469,15 @@ void print_status_table(const ColWidths *w, bool dirty_only) {
         qsort(order, g_repo_count, sizeof(int), cmp_repo_name_idx);
     }
 
-    int total = 0, clean = 0, dirty = 0, behind = 0, hidden = 0;
     for (size_t i = 0; i < g_repo_count; i++) {
         const Repo *r = &g_repos[order ? (size_t)order[i] : i];
-        total++;
-        if (r->staged || r->modified || r->untracked) dirty++; else clean++;
-        if (r->behind > 0) behind++;
-
-        if (dirty_only && !repo_is_dirty(r)) { hidden++; continue; }
+        if (dirty_only && !repo_is_dirty(r)) continue;
         print_repo(r, w);
     }
     free(order);
 
     print_separator(w);
-    if (total == 0) {
-        printf("  No git repositories found.%s\n", EOL());
-    } else {
-        printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
-            C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
-            C(COL_GREEN), clean,  C(COL_RESET),
-            C(COL_RED),   dirty,  C(COL_RESET));
-        if (behind > 0)
-            printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
-        if (hidden > 0)
-            printf(" %s(%d hidden)%s", C(COL_DIM), hidden, C(COL_RESET));
-        printf("%s\n", EOL());
-    }
+    print_summary(dirty_only);
 }
 
 /* ── Grouped status table (watch mode) ─────────────────────────────────────── */
@@ -487,30 +503,8 @@ void print_grouped_table(const ColWidths *w, bool dirty_only,
         }
     }
 
-    /* summary counts every repo (independent of collapse / dirty filtering) */
-    int total = 0, clean = 0, dirty = 0, behind = 0, hidden = 0;
-    for (size_t i = 0; i < g_repo_count; i++) {
-        const Repo *r = &g_repos[i];
-        total++;
-        if (r->staged || r->modified || r->untracked) dirty++; else clean++;
-        if (r->behind > 0) behind++;
-        if (dirty_only && !repo_is_dirty(r)) hidden++;
-    }
-
     print_separator(w);
-    if (total == 0) {
-        printf("  No git repositories found.%s\n", EOL());
-    } else {
-        printf("  %s%d repo%s%s · %s%d clean%s · %s%d dirty%s",
-            C(COL_BOLD), total, total == 1 ? "" : "s", C(COL_RESET),
-            C(COL_GREEN), clean,  C(COL_RESET),
-            C(COL_RED),   dirty,  C(COL_RESET));
-        if (behind > 0)
-            printf(" · %s%d behind%s", C(COL_YELLOW), behind, C(COL_RESET));
-        if (hidden > 0)
-            printf(" %s(%d hidden)%s", C(COL_DIM), hidden, C(COL_RESET));
-        printf("%s\n", EOL());
-    }
+    print_summary(dirty_only);   /* counts every repo, independent of collapse */
 }
 
 /* ── Switch summary ────────────────────────────────────────────────────────── */
