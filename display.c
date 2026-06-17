@@ -28,6 +28,141 @@ int term_width(void) {
     return 0;
 }
 
+/* ── UTF-8 display width ───────────────────────────────────────────────────── */
+/*
+ * Terminal column width of UTF-8 text. We can't use the system wcwidth(): the
+ * program runs in the C locale (LC_ALL=C, set for stable git output matching),
+ * where wcwidth/mbrtowc don't understand UTF-8. So width is computed from the
+ * decoded codepoint against built-in Unicode tables (after Markus Kuhn's
+ * public-domain wcwidth, 2007): combining/zero-width marks are 0 columns, East
+ * Asian Wide/Fullwidth and the common emoji blocks are 2, everything else 1.
+ * This keeps the table aligned when a repo or branch name contains CJK text.
+ */
+
+/* Decode one UTF-8 sequence at p into *cp. Returns the byte length (1..4).
+ * An invalid lead byte or a truncated sequence decodes as the single lead byte
+ * (length 1), so callers always advance and never loop forever. */
+static int utf8_decode(const unsigned char *p, uint32_t *cp) {
+    unsigned char c = p[0];
+    if (c < 0x80) { *cp = c; return 1; }
+    int len;
+    uint32_t v;
+    if      ((c & 0xE0) == 0xC0) { len = 2; v = c & 0x1Fu; }
+    else if ((c & 0xF0) == 0xE0) { len = 3; v = c & 0x0Fu; }
+    else if ((c & 0xF8) == 0xF0) { len = 4; v = c & 0x07u; }
+    else { *cp = c; return 1; }                  /* invalid lead byte */
+    for (int i = 1; i < len; i++) {
+        if ((p[i] & 0xC0) != 0x80) { *cp = c; return 1; }  /* truncated/invalid */
+        v = (v << 6) | (uint32_t)(p[i] & 0x3F);
+    }
+    *cp = v;
+    return len;
+}
+
+/* Zero-width (combining / format) codepoint ranges, sorted for binary search. */
+static const struct { uint32_t first, last; } COMBINING[] = {
+    {0x0300,0x036F},{0x0483,0x0489},{0x0591,0x05BD},{0x05BF,0x05BF},
+    {0x05C1,0x05C2},{0x05C4,0x05C5},{0x05C7,0x05C7},{0x0610,0x061A},
+    {0x064B,0x065F},{0x0670,0x0670},{0x06D6,0x06DC},{0x06DF,0x06E4},
+    {0x06E7,0x06E8},{0x06EA,0x06ED},{0x0711,0x0711},{0x0730,0x074A},
+    {0x07A6,0x07B0},{0x07EB,0x07F3},{0x0816,0x0819},{0x081B,0x0823},
+    {0x0825,0x0827},{0x0829,0x082D},{0x0900,0x0902},{0x093C,0x093C},
+    {0x0941,0x0948},{0x094D,0x094D},{0x0951,0x0957},{0x0962,0x0963},
+    {0x0981,0x0981},{0x09BC,0x09BC},{0x09C1,0x09C4},{0x09CD,0x09CD},
+    {0x09E2,0x09E3},{0x0A01,0x0A02},{0x0A3C,0x0A3C},{0x0A41,0x0A42},
+    {0x0A47,0x0A48},{0x0A4B,0x0A4D},{0x0A70,0x0A71},{0x0A81,0x0A82},
+    {0x0ABC,0x0ABC},{0x0AC1,0x0AC5},{0x0AC7,0x0AC8},{0x0ACD,0x0ACD},
+    {0x0B01,0x0B01},{0x0B3C,0x0B3C},{0x0B3F,0x0B3F},{0x0B41,0x0B44},
+    {0x0B4D,0x0B4D},{0x0B56,0x0B56},{0x0B82,0x0B82},{0x0BC0,0x0BC0},
+    {0x0BCD,0x0BCD},{0x0C3E,0x0C40},{0x0C46,0x0C48},{0x0C4A,0x0C4D},
+    {0x0C55,0x0C56},{0x0CBC,0x0CBC},{0x0CCC,0x0CCD},{0x0CE2,0x0CE3},
+    {0x0D41,0x0D44},{0x0D4D,0x0D4D},{0x0DCA,0x0DCA},{0x0DD2,0x0DD4},
+    {0x0DD6,0x0DD6},{0x0E31,0x0E31},{0x0E34,0x0E3A},{0x0E47,0x0E4E},
+    {0x0EB1,0x0EB1},{0x0EB4,0x0EB9},{0x0EBB,0x0EBC},{0x0EC8,0x0ECD},
+    {0x0F18,0x0F19},{0x0F35,0x0F35},{0x0F37,0x0F37},{0x0F39,0x0F39},
+    {0x0F71,0x0F7E},{0x0F80,0x0F84},{0x0F86,0x0F87},{0x0F90,0x0F97},
+    {0x0F99,0x0FBC},{0x0FC6,0x0FC6},{0x102D,0x1030},{0x1032,0x1037},
+    {0x1039,0x103A},{0x1058,0x1059},{0x1160,0x11FF},{0x135F,0x135F},
+    {0x1712,0x1714},{0x1732,0x1734},{0x1752,0x1753},{0x1772,0x1773},
+    {0x17B4,0x17B5},{0x17B7,0x17BD},{0x17C6,0x17C6},{0x17C9,0x17D3},
+    {0x17DD,0x17DD},{0x180B,0x180D},{0x18A9,0x18A9},{0x1920,0x1922},
+    {0x1927,0x1928},{0x1932,0x1932},{0x1939,0x193B},{0x1A17,0x1A18},
+    {0x1B00,0x1B03},{0x1B34,0x1B34},{0x1B36,0x1B3A},{0x1B3C,0x1B3C},
+    {0x1B42,0x1B42},{0x1B6B,0x1B73},{0x1DC0,0x1DCA},{0x1DFE,0x1DFF},
+    {0x200B,0x200F},{0x202A,0x202E},{0x2060,0x2063},{0x206A,0x206F},
+    {0x20D0,0x20F0},{0x302A,0x302F},{0x3099,0x309A},{0xA806,0xA806},
+    {0xA80B,0xA80B},{0xA825,0xA826},{0xFB1E,0xFB1E},{0xFE00,0xFE0F},
+    {0xFE20,0xFE26},{0xFEFF,0xFEFF},{0xFFF9,0xFFFB},{0x1D167,0x1D169},
+    {0x1D173,0x1D182},{0x1D185,0x1D18B},{0x1D1AA,0x1D1AD},{0x1D242,0x1D244},
+    {0xE0001,0xE0001},{0xE0020,0xE007F},{0xE0100,0xE01EF},
+};
+
+static int is_combining(uint32_t cp) {
+    int lo = 0, hi = (int)(sizeof(COMBINING) / sizeof(COMBINING[0])) - 1;
+    if (cp < COMBINING[0].first || cp > COMBINING[hi].last) return 0;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if      (cp < COMBINING[mid].first) hi = mid - 1;
+        else if (cp > COMBINING[mid].last)  lo = mid + 1;
+        else return 1;
+    }
+    return 0;
+}
+
+/* East Asian Wide / Fullwidth ranges plus the common double-width emoji blocks. */
+static int is_wide(uint32_t cp) {
+    return
+        (cp >= 0x1100 && cp <= 0x115F) ||   /* Hangul Jamo */
+        cp == 0x2329 || cp == 0x232A ||
+        (cp >= 0x2E80 && cp <= 0xA4CF && cp != 0x303F) || /* CJK … Yi */
+        (cp >= 0xAC00 && cp <= 0xD7A3) ||   /* Hangul syllables */
+        (cp >= 0xF900 && cp <= 0xFAFF) ||   /* CJK compat ideographs */
+        (cp >= 0xFE10 && cp <= 0xFE19) ||   /* vertical forms */
+        (cp >= 0xFE30 && cp <= 0xFE6F) ||   /* CJK compat forms */
+        (cp >= 0xFF00 && cp <= 0xFF60) ||   /* fullwidth forms */
+        (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+        (cp >= 0x1F000 && cp <= 0x1FAFF) || /* emoji & symbols (mostly wide) */
+        (cp >= 0x20000 && cp <= 0x3FFFD);   /* CJK extension planes */
+}
+
+/* Display columns for one codepoint: 0 (combining/control), 1 (normal), 2 (wide). */
+static int codepoint_width(uint32_t cp) {
+    if (cp == 0) return 0;
+    if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) return 0;   /* C0/C1 controls */
+    if (is_combining(cp)) return 0;
+    if (is_wide(cp))      return 2;
+    return 1;
+}
+
+int utf8_width(const char *s) {
+    int w = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        uint32_t cp;
+        p += utf8_decode(p, &cp);
+        w += codepoint_width(cp);
+    }
+    return w;
+}
+
+/* Byte length of the longest prefix of s whose display width is <= max_w.
+ * When out_w is non-NULL it receives that prefix's actual width, which can be
+ * one less than max_w when a wide character would have overflowed the budget. */
+static size_t utf8_fit(const char *s, int max_w, int *out_w) {
+    const unsigned char *p = (const unsigned char *)s;
+    int w = 0;
+    while (*p) {
+        uint32_t cp;
+        int len = utf8_decode(p, &cp);
+        int cw  = codepoint_width(cp);
+        if (w + cw > max_w) break;
+        w += cw;
+        p += len;
+    }
+    if (out_w) *out_w = w;
+    return (size_t)(p - (const unsigned char *)s);
+}
+
 /* Truncate s to at most max_w display columns. For paths the tail is the most
  * useful part, so the front is dropped and replaced with a leading ellipsis.
  * Returns a pointer to a rotating static buffer. */
@@ -38,14 +173,14 @@ const char *ellipsize(const char *s, int max_w) {
         snprintf(buf, sizeof(buf), "%s", s);
         return buf;
     }
-    int drop = w - (max_w - 1);          /* reserve 1 column for the ellipsis */
+    int drop = w - (max_w - 1);          /* columns to drop (1 kept for the …) */
     const unsigned char *p = (const unsigned char *)s;
-    int skipped = 0;
-    while (*p && skipped < drop) {
-        int seqlen = *p < 0x80 ? 1 : *p < 0xE0 ? 2 : *p < 0xF0 ? 3 : 4;
-        for (int j = 1; j < seqlen; j++) if (p[j] == '\0') { seqlen = j; break; }
-        p += seqlen;
-        skipped++;
+    int dropped = 0;
+    while (*p && dropped < drop) {        /* drop whole codepoints by their width */
+        uint32_t cp;
+        int len = utf8_decode(p, &cp);
+        dropped += codepoint_width(cp);
+        p += len;
     }
     snprintf(buf, sizeof(buf), "\xe2\x80\xa6%s", (const char *)p);   /* … + tail */
     return buf;
@@ -81,45 +216,6 @@ const char *relative_time(git_time_t t) {
     return buf;
 }
 
-/* ── UTF-8 display width ───────────────────────────────────────────────────── */
-int utf8_width(const char *s) {
-    int w = 0;
-    const unsigned char *p = (const unsigned char *)s;
-    while (*p) {
-        int seqlen;
-        if      (*p < 0x80) seqlen = 1;
-        else if (*p < 0xE0) seqlen = 2;
-        else if (*p < 0xF0) seqlen = 3;
-        else                seqlen = 4;
-        /* guard against truncated sequences at end of string */
-        for (int j = 1; j < seqlen; j++)
-            if (p[j] == '\0') goto done;
-        p += seqlen;
-        w++;
-    }
-done:
-    return w;
-}
-
-/* Returns the byte length of the longest prefix of s with display width <= max_w. */
-static size_t utf8_byte_len_for_width(const char *s, int max_w) {
-    const unsigned char *p = (const unsigned char *)s;
-    int w = 0;
-    while (*p && w < max_w) {
-        int seqlen;
-        if      (*p < 0x80) seqlen = 1;
-        else if (*p < 0xE0) seqlen = 2;
-        else if (*p < 0xF0) seqlen = 3;
-        else                seqlen = 4;
-        for (int j = 1; j < seqlen; j++)
-            if (p[j] == '\0') goto done;
-        p += seqlen;
-        w++;
-    }
-done:
-    return (size_t)(p - (const unsigned char *)s);
-}
-
 /* ── Column printer ────────────────────────────────────────────────────────── */
 void write_col(const char *s, int width) {
     int dw = utf8_width(s);
@@ -127,9 +223,11 @@ void write_col(const char *s, int width) {
         printf("%s", s);
         printf("%-*s", width - dw, "");
     } else {
-        /* truncate at a character boundary, not a byte boundary */
-        size_t bytes = utf8_byte_len_for_width(s, width - 1);
-        printf("%.*s~", (int)bytes, s);
+        /* truncate at a character boundary; pad so the cell is exactly `width`
+         * even when a wide character left the last column short of width-1 */
+        int pw = 0;
+        size_t bytes = utf8_fit(s, width - 1, &pw);
+        printf("%.*s~%-*s", (int)bytes, s, width - pw - 1, "");
     }
 }
 
@@ -359,12 +457,13 @@ static void print_group_header(const Group *g, const ColWidths *w, bool selected
     const char *key = g->key;
     char kbuf[PATH_MAX];
     if (key_w > key_budget) {                       /* truncate, '~' marks the cut */
-        size_t bl = utf8_byte_len_for_width(key, key_budget - 1);
+        int pw = 0;
+        size_t bl = utf8_fit(key, key_budget - 1, &pw);
         memcpy(kbuf, key, bl);
         kbuf[bl] = '~';
         kbuf[bl + 1] = '\0';
         key = kbuf;
-        key_w = key_budget;
+        key_w = pw + 1;                             /* prefix columns + the '~' */
     }
 
     /* cyan + bold: same hue as the repo-name rows, just bold so the folder
