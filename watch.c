@@ -551,6 +551,22 @@ void run_watch(const char *abs_dir) {
     int    cursor      = -1;      /* selected visible row, -1 = no highlight yet */
 
     while (!g_watch_stop) {
+        /* remember the selected row's identity (repo path / category key) so the
+         * highlight follows the same item across the rescan, where the visible-
+         * row indices are rebuilt. Captured before free_repo_collection() while
+         * the previous tick's g_repos is still valid. */
+        char anchor[PATH_MAX] = "";
+        bool anchor_group = false;
+        if (cursor >= 0 && (size_t)cursor < g_row_count) {
+            const VisRow *vr = &g_rows[cursor];
+            if (vr->kind == ROW_HEADER) {
+                snprintf(anchor, sizeof(anchor), "%s", g_groups[vr->group_idx].key);
+                anchor_group = true;
+            } else {
+                snprintf(anchor, sizeof(anchor), "%s", g_repos[vr->repo_idx].path);
+            }
+        }
+
         /* free the previous tick's scan here (not before the wait) so g_paths
          * stays available for the branch picker while we wait for input */
         free_repo_collection();
@@ -630,9 +646,27 @@ void run_watch(const char *abs_dir) {
         struct timespec tick_start;
         clock_gettime(CLOCK_MONOTONIC, &tick_start);
         const long tick_ms = (long)opt_watch_interval * 1000;
+        bool relocate = true;   /* re-anchor the cursor on the first build below */
 
         for (;;) {
             build_visrows();
+            /* after a rescan, move the highlight back onto the anchored item so
+             * it tracks the same repo/category instead of a fixed row index */
+            if (relocate) {
+                relocate = false;
+                for (size_t i = 0; anchor[0] && i < g_row_count; i++) {
+                    const VisRow *vr = &g_rows[i];
+                    if (anchor_group) {
+                        if (vr->kind == ROW_HEADER &&
+                            strcmp(g_groups[vr->group_idx].key, anchor) == 0) {
+                            cursor = (int)i; break;
+                        }
+                    } else if (vr->kind == ROW_REPO &&
+                               strcmp(g_repos[vr->repo_idx].path, anchor) == 0) {
+                        cursor = (int)i; break;
+                    }
+                }
+            }
             /* cursor may be -1 (no selection until the first arrow key); compare
              * as int so -1 isn't promoted to a huge size_t and clamped to the end */
             if (g_row_count == 0)                      cursor = -1;
@@ -698,6 +732,8 @@ void run_watch(const char *abs_dir) {
                     collect_recent_branches();
                     if (read_branch(branch, sizeof(branch)))
                         action = 's';
+                    else
+                        note[0] = '\0';   /* cancelled — drop any stale note */
                     free_recent_branches();
                     break;
                 }

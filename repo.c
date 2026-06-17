@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/wait.h>
@@ -476,7 +477,11 @@ static int run_git_capture(const char **argv, char *buf, size_t n) {
     close(pfd[0]);
 
     int status = 0;
-    waitpid(pid, &status, 0);
+    pid_t w;
+    /* retry on EINTR: a bare waitpid() interrupted by a signal would leave
+     * status untouched (reported as a clean exit 0) and orphan a zombie */
+    do { w = waitpid(pid, &status, 0); } while (w < 0 && errno == EINTR);
+    if (w < 0) return -1;
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
@@ -505,8 +510,8 @@ static FetchResult do_fetch(git_repository *repo, Repo *r) {
     char errbuf[256] = "";
     int rc = run_git_capture(fetch_argv, errbuf, sizeof(errbuf));
     if (rc != 0) {
-        strncpy(r->net_error, errbuf[0] ? errbuf : "git fetch failed",
-                sizeof(r->net_error) - 1);
+        snprintf(r->net_error, sizeof(r->net_error), "%s",
+                 errbuf[0] ? errbuf : "git fetch failed");
         return FR_ERROR;
     }
 
@@ -553,8 +558,8 @@ static PullResult do_pull(git_repository *repo, Repo *r) {
         strstr(outbuf, "no upstream configured")  != NULL)
         return PR_NO_REMOTE;
 
-    strncpy(r->net_error, outbuf[0] ? outbuf : "git pull failed",
-            sizeof(r->net_error) - 1);
+    snprintf(r->net_error, sizeof(r->net_error), "%s",
+             outbuf[0] ? outbuf : "git pull failed");
     return PR_ERROR;
 }
 
@@ -665,6 +670,18 @@ static void run_thread_pool(int nthreads, void *(*fn)(void *)) {
     pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
     if (!threads) { fn(NULL); return; }
 
+    /* Block SIGINT/SIGTERM/SIGWINCH while spawning so the workers inherit a
+     * blocked mask: those signals must be handled only by the main thread
+     * (whose poll()/handlers drive watch mode). A signal delivered to a worker
+     * would interrupt its waitpid()/syscalls with EINTR. The main thread's mask
+     * is restored right after creation so it keeps receiving them. */
+    sigset_t block, old;
+    sigemptyset(&block);
+    sigaddset(&block, SIGINT);
+    sigaddset(&block, SIGTERM);
+    sigaddset(&block, SIGWINCH);
+    pthread_sigmask(SIG_BLOCK, &block, &old);
+
     int created = 0;
     for (int i = 0; i < nthreads; i++) {
         if (pthread_create(&threads[i], NULL, fn, NULL) != 0) {
@@ -673,6 +690,9 @@ static void run_thread_pool(int nthreads, void *(*fn)(void *)) {
         }
         created++;
     }
+
+    pthread_sigmask(SIG_SETMASK, &old, NULL);   /* main thread resumes handling */
+
     for (int i = 0; i < created; i++)
         pthread_join(threads[i], NULL);
 
