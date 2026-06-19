@@ -199,8 +199,8 @@ int main(int argc, char **argv) {
 
     int maj, min, rev;
     git_libgit2_version(&maj, &min, &rev);
-    if (maj < 1 || (maj == 1 && min < 9)) {
-        fprintf(stderr, "Error: libgit2 >= 1.9 required, found %d.%d.%d\n",
+    if (maj < 1 || (maj == 1 && min < 7)) {
+        fprintf(stderr, "Error: libgit2 >= 1.7 required, found %d.%d.%d\n",
                 maj, min, rev);
         git_libgit2_shutdown();
         return 1;
