@@ -50,7 +50,7 @@ brew install gitls
 
 ### Build from source
 
-Requires [libgit2](https://libgit2.org/) ≥ 1.9 (and [git](https://git-scm.com/)
+Requires [libgit2](https://libgit2.org/) ≥ 1.7 (and [git](https://git-scm.com/)
 for the `fetch` / `pull` subcommands).
 
 ```sh
@@ -381,7 +381,7 @@ Options:
 A `gitls(1)` man page is installed alongside the binary — run `man gitls` for
 the full reference.
 
-**Requirements:** [libgit2](https://libgit2.org/) ≥ 1.9, and
+**Requirements:** [libgit2](https://libgit2.org/) ≥ 1.7, and
 [git](https://git-scm.com/) for the `fetch` / `pull` subcommands (and the `f` /
 `p` keys in watch mode).
 

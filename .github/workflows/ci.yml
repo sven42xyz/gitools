@@ -21,18 +21,14 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libgit2
 
-      - name: Install libgit2 1.9 from source (Linux)
+      - name: Install libgit2 (Linux)
         if: runner.os == 'Linux'
         run: |
+          # Use the distro package (libgit2 1.7.2 on ubuntu-latest / 24.04),
+          # which is the minimum version gitls supports — so CI tests against
+          # the real floor rather than a hand-built newer release.
           sudo apt-get update
-          sudo apt-get install -y cmake libssl-dev libssh2-1-dev
-          git clone --depth 1 --branch v1.9.0 https://github.com/libgit2/libgit2.git /tmp/libgit2
-          cmake -S /tmp/libgit2 -B /tmp/libgit2/build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr/local
-          cmake --build /tmp/libgit2/build --parallel
-          sudo cmake --install /tmp/libgit2/build
-          sudo ldconfig
+          sudo apt-get install -y libgit2-dev pkg-config
 
       - name: Build & test
         run: make test
