@@ -2,6 +2,7 @@ gitls
 *.o
 *.d
 tests/unit
+tests/__pycache__/
 .vscode/
 ideas.md
 .version
