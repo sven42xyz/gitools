@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp */
 #include <time.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -404,17 +405,40 @@ bool repo_is_dirty(const Repo *r) {
 }
 
 /* ── Status table ──────────────────────────────────────────────────────────── */
+/* basename of a repo path (the segment after the last '/'). */
+static const char *path_basename(const char *path) {
+    const char *s = strrchr(path, '/');
+    return s ? s + 1 : path;
+}
+
+/* Order g_repos indices by display name (case-insensitive), scan index as a
+ * stable tie-break — matching the watch-mode ordering. */
+static int cmp_repo_name_idx(const void *a, const void *b) {
+    int ia = *(const int *)a, ib = *(const int *)b;
+    int c = strcasecmp(path_basename(g_repos[ia].path),
+                       path_basename(g_repos[ib].path));
+    return c ? c : (ia - ib);
+}
+
 /*
  * Print the header, one row per repo and the trailing summary line.
- * When dirty_only is set, clean+in-sync repos are hidden from the listing but
- * still counted in the summary, which appends "(N hidden)".
+ * Rows are listed alphabetically by repo name. When dirty_only is set,
+ * clean+in-sync repos are hidden from the listing but still counted in the
+ * summary, which appends "(N hidden)".
  */
 void print_status_table(const ColWidths *w, bool dirty_only) {
     print_header(w);
 
+    /* sorted view over g_repos; falls back to scan order if the alloc fails */
+    int *order = malloc(g_repo_count * sizeof(int));
+    if (order) {
+        for (size_t i = 0; i < g_repo_count; i++) order[i] = (int)i;
+        qsort(order, g_repo_count, sizeof(int), cmp_repo_name_idx);
+    }
+
     int total = 0, clean = 0, dirty = 0, behind = 0, hidden = 0;
     for (size_t i = 0; i < g_repo_count; i++) {
-        const Repo *r = &g_repos[i];
+        const Repo *r = &g_repos[order ? (size_t)order[i] : i];
         total++;
         if (r->staged || r->modified || r->untracked) dirty++; else clean++;
         if (r->behind > 0) behind++;
@@ -422,6 +446,7 @@ void print_status_table(const ColWidths *w, bool dirty_only) {
         if (dirty_only && !repo_is_dirty(r)) { hidden++; continue; }
         print_repo(r, w);
     }
+    free(order);
 
     print_separator(w);
     if (total == 0) {
