@@ -49,8 +49,9 @@ static bool is_all_digits(const char *s) {
 }
 
 /* ── Usage ─────────────────────────────────────────────────────────────────── */
-static void usage(const char *prog) {
-    fprintf(stderr,
+/* out is stdout for an explicit -h/--help, stderr when reporting a usage error. */
+static void usage(FILE *out, const char *prog) {
+    fprintf(out,
         "Usage: %s [fetch|pull] [OPTIONS] [DIRECTORY]\n"
         "\n"
         "Recursively scan DIRECTORY (default: .) for git repositories\n"
@@ -115,7 +116,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (i == subcommand_idx) continue;
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            usage(argv[0]);
+            usage(stdout, argv[0]);
             return 0;
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("gitls %s\n", VERSION_STRING);
@@ -163,7 +164,7 @@ int main(int argc, char **argv) {
             user_gave_dir = true;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            usage(argv[0]);
+            usage(stderr, argv[0]);
             return 1;
         }
     }
@@ -241,7 +242,7 @@ int main(int argc, char **argv) {
     const char *verb = (opt_switch && !opt_fetch && !opt_pull) ? "Switching:"
                                                                : "Scanning:";
 
-    char spin_label[PATH_MAX + 16];
+    char spin_label[PATH_MAX + 64];
     snprintf(spin_label, sizeof(spin_label), "%s%s%s %s",
              C(COL_BOLD), verb, C(COL_RESET), abs_dir);
     spinner_start(spin_label);

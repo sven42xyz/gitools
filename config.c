@@ -60,14 +60,18 @@ void load_config(void) {
             if (val[0] == '~' && val[1] == '/' && pw) {
                 snprintf(opt_default_dir, sizeof(opt_default_dir),
                          "%s/%s", pw->pw_dir, val + 2);
+            } else if (strcmp(val, "~") == 0 && pw) {
+                snprintf(opt_default_dir, sizeof(opt_default_dir), "%s", pw->pw_dir);
             } else {
                 snprintf(opt_default_dir, sizeof(opt_default_dir), "%s", val);
             }
 
         } else if (strcmp(key, "max_depth") == 0) {
             char *end;
-            int d = (int)strtol(val, &end, 10);
-            if (*end == '\0' && d >= 0) opt_max_depth = d;
+            errno = 0;
+            long d = strtol(val, &end, 10);
+            if (*end == '\0' && errno != ERANGE && d >= 0 && d <= INT_MAX)
+                opt_max_depth = (int)d;
 
         } else if (strcmp(key, "skip_dirs") == 0) {
 #define MAX_SKIP_DIRS 64
