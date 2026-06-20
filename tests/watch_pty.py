@@ -235,8 +235,10 @@ def main():
     check("alternate screen entered", "\033[?1049h" in first)
     check("cursor hidden", "\033[?25l" in first)
     check("footer shows keys + interval", "fetch" in first and "interval 5s" in first)
-    check("footer shows directory", work in first)
+    check("footer omits directory", work not in first.split("interval")[-1])
     check("footer omits 'last scan'", "last scan" not in first)
+    # a/b are top-level repos (no categories) -> no nav hints in the footer
+    check("footer hides nav without categories", "expand" not in first)
     tail, status = w.finish()
     check("alternate screen left on quit", "\033[?1049l" in (first + tail))
     check("cursor shown on quit", "\033[?25h" in (first + tail))
@@ -304,6 +306,113 @@ def main():
     check("narrowing branch leaves no stale columns", long_branch[:12] not in screen)
     check("exactly one header row after switch", len(headers) == 1)
     subprocess.run(["rm", "-rf", wide])
+
+    # ── 6. nested repos collapse under a category header ──
+    grp = tempfile.mkdtemp(prefix="gitls-grp-")
+    make_repo(os.path.join(grp, "flat"))
+    make_repo(os.path.join(grp, "alpha"))                       # sorts before flat
+    make_repo(os.path.join(grp, "core", "packages", "auth"))
+    make_repo(os.path.join(grp, "core", "packages", "api"))
+    open(os.path.join(grp, "core", "packages", "api", "scratch"), "w").write("x")  # dirty
+    make_repo(os.path.join(grp, "lib", "a"))                    # all-clean category
+    make_repo(os.path.join(grp, "lib", "b"))
+    make_repo(os.path.join(grp, "solo", "widget"))             # lone repo -> folded flat
+    w = Watcher(grp)
+    raw = w.drain(1.5)
+    s1 = (lambda t: (t.feed(raw), t.text())[1])(Term())
+
+    def line_with(text, needle):
+        return next((l for l in text.splitlines() if needle in l), "")
+
+    check("flat repo shown at top", "flat" in s1)
+    check("flat repos sorted alphabetically", ordered(s1, ["alpha", "flat", "widget"]))
+    # category header interleaves alphabetically: core › packages sits between
+    # the "alpha" and "flat" repos, not in a separate block below them
+    check("category interleaved alphabetically",
+          ordered(s1, ["alpha", "core › packages", "flat"]))
+    check("single-repo folder folded to repo name", "widget" in s1 and "solo" not in s1)
+    check("category header shown", "core › packages" in s1)
+    check("category header shows count", "(2)" in s1)
+    check("nested repos hidden by default", "auth" not in s1)
+    # aggregated folder status: dirty count on the header, ✓ when all clean
+    check("category aggregates dirty count", "●" in line_with(s1, "core › packages"))
+    check("clean category shows check", "✓" in line_with(s1, "lib (2)"))
+    # folder status and top-level repo status share the same STATUS column
+    status_col = line_with(s1, "STATUS").index("STATUS")
+    check("folder status aligned to STATUS column",
+          line_with(s1, "core › packages").find("●") == status_col
+          and line_with(s1, "lib (2)").find("✓") == status_col)
+    check("top repo status aligned to STATUS column",
+          line_with(s1, "alpha").find("✓") == status_col)
+    # nav hints appear because categories exist
+    check("footer shows nav with categories", "expand" in s1)
+    # cursor starts unselected (-1): first ↓ selects row 0 (alpha), second ↓
+    # reaches the header at row 1, then Enter expands
+    w.send(b"\x1b[B"); w.drain(0.2)
+    w.send(b"\x1b[B"); w.drain(0.2)
+    w.send(b"\r")                      # enter: expand
+    raw2 = w.drain(1.0)
+    s2 = (lambda t: (t.feed(raw + raw2), t.text())[1])(Term())
+    check("nested repos shown after expand", "auth" in s2)
+    # the indent of a nested repo is absorbed into the NAME column, so its
+    # BRANCH/SYNC/WHEN/STATUS align with un-indented top-level repo rows
+    status_col2 = line_with(s2, "STATUS").index("STATUS")
+    check("nested repo status aligned with top-level",
+          line_with(s2, "auth").find("✓") == status_col2
+          and line_with(s2, "alpha").find("✓") == status_col2)
+    # collapse again
+    w.send(b"\r")
+    raw3 = w.drain(1.0)
+    s3 = (lambda t: (t.feed(raw + raw2 + raw3), t.text())[1])(Term())
+    check("nested repos hidden after re-collapse", "auth" not in s3)
+    w.finish()
+    subprocess.run(["rm", "-rf", grp])
+
+    # ── 7. a long breadcrumb overflows the row instead of widening NAME ──
+    deep = tempfile.mkdtemp(prefix="gitls-deep-")
+    make_repo(os.path.join(deep, "x"))                 # short top-level repo
+    crumb = ["platform", "services", "authentication", "backend"]
+    make_repo(os.path.join(deep, *crumb, "one"))
+    make_repo(os.path.join(deep, *crumb, "two"))
+    w = Watcher(deep)
+    raw = w.drain(1.5)
+    sd = (lambda t: (t.feed(raw), t.text())[1])(Term())
+    header = " › ".join(crumb)                     # "platform › … › backend"
+    check("long breadcrumb shown in full (no ~)", header in sd and "~" not in sd)
+    col = line_with(sd, "STATUS").index("STATUS")
+    # the NAME column is sized to the short repo names, not the breadcrumb: the
+    # repo status stays in the STATUS column while the header status overflows it
+    check("repo status stays in STATUS column", line_with(sd, " x ").find("✓") == col)
+    check("long breadcrumb overflows past STATUS", line_with(sd, "backend").find("✓") > col)
+    w.finish()
+    subprocess.run(["rm", "-rf", deep])
+
+    # ── 8. categories=false: one flat, alphabetical list, no folders ──
+    nocat = tempfile.mkdtemp(prefix="gitls-nocat-")
+    make_repo(os.path.join(nocat, "flat"))
+    make_repo(os.path.join(nocat, "core", "packages", "auth"))
+    make_repo(os.path.join(nocat, "core", "packages", "api"))
+    make_repo(os.path.join(nocat, "lib", "zlib"))
+    cfg = os.path.join(nocat, "gitls.conf")
+    with open(cfg, "w") as f:
+        f.write("categories=false\n")
+    os.environ["GITLS_CONFIG"] = cfg          # inherited by the watcher via execv
+    try:
+        w = Watcher(nocat)
+        raw = w.drain(1.5)
+        s = (lambda t: (t.feed(raw), t.text())[1])(Term())
+        w.finish()
+    finally:
+        del os.environ["GITLS_CONFIG"]
+    check("no category breadcrumbs when disabled", "›" not in s)
+    check("no folder chevrons when disabled", "▶" not in s and "▼" not in s)
+    # every repo (including the nested ones) is shown flat...
+    check("nested repos shown flat", all(n in s for n in ("api", "auth", "flat", "zlib")))
+    # ...alphabetically sorted by name
+    check("flat list sorted alphabetically", ordered(s, ["api", "auth", "flat", "zlib"]))
+    # no collapsible categories -> footer drops the nav hints
+    check("footer hides nav when categories off", "expand" not in s)
+    subprocess.run(["rm", "-rf", nocat])
 
     subprocess.run(["rm", "-rf", work])
     print(f"\n{passed} passed, {failed} failed")

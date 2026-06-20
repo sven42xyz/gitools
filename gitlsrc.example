@@ -20,5 +20,9 @@
 # Only list repos that are not clean and in sync (like the --dirty flag).
 # dirty_only=true
 
+# Group repos by their parent folder into collapsible categories in watch
+# mode (-w). On by default; set to false for one flat, alphabetical list.
+# categories=true
+
 # Disable ANSI colors (true or 1)
 # no_color=false

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp */
 #include <signal.h>
 #include <errno.h>
 #include <time.h>
@@ -68,22 +69,29 @@ static void enter_raw_mode(void) {
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
 }
 
+/* ── Logical keys ──────────────────────────────────────────────────────────── */
+typedef enum {
+    K_NONE, K_CHAR, K_ENTER, K_ESC, K_TAB, K_BACKSPACE, K_UP, K_DOWN, K_EOF
+} Key;
+
+static Key read_key(char *ch);
+
 /* ── Input events ──────────────────────────────────────────────────────────── */
 typedef enum {
     EV_TIMEOUT,   /* interval elapsed — refresh */
     EV_QUIT,      /* user asked to quit */
-    EV_KEY,       /* a key was pressed (see *key_out) */
+    EV_KEY,       /* a key was pressed (see *key_out / *ch_out) */
 } WatchEvent;
 
 /*
- * Block up to interval_sec seconds. Returns EV_TIMEOUT when the interval
- * elapses, EV_QUIT on 'q'/'Q'/Ctrl-C or a stop signal, or EV_KEY (with the
- * byte stored in *key_out) for any other keypress.
+ * Block up to timeout_ms milliseconds. Returns EV_TIMEOUT when it elapses,
+ * EV_QUIT on 'q'/'Q'/Ctrl-C or a stop signal, or EV_KEY with the decoded
+ * logical key in *key_out (and the byte in *ch_out for K_CHAR).
  */
-static WatchEvent wait_for_event(int interval_sec, char *key_out) {
+static WatchEvent wait_for_event(int timeout_ms, Key *key_out, char *ch_out) {
     struct timespec start;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    const long deadline_ms = (long)interval_sec * 1000;
+    const long deadline_ms = timeout_ms;
 
     for (;;) {
         if (g_watch_stop) return EV_QUIT;
@@ -104,11 +112,12 @@ static WatchEvent wait_for_event(int interval_sec, char *key_out) {
         if (rc == 0) return EV_TIMEOUT;     /* timeout — time to rescan */
 
         if (pfd.revents & POLLIN) {
-            char c;
-            ssize_t n = read(STDIN_FILENO, &c, 1);
-            if (n <= 0) continue;
-            if (c == 'q' || c == 'Q' || c == 3 /* Ctrl-C */) return EV_QUIT;
-            *key_out = c;
+            char c = 0;
+            Key k = read_key(&c);
+            if (k == K_NONE) continue;
+            if (k == K_CHAR && (c == 'q' || c == 'Q')) return EV_QUIT;
+            *key_out = k;
+            *ch_out  = c;
             return EV_KEY;
         }
     }
@@ -116,10 +125,6 @@ static WatchEvent wait_for_event(int interval_sec, char *key_out) {
 
 /* ── Branch picker ─────────────────────────────────────────────────────────── */
 #define PICK_VISIBLE 8     /* max branch rows shown at once */
-
-typedef enum {
-    K_NONE, K_CHAR, K_ENTER, K_ESC, K_TAB, K_BACKSPACE, K_UP, K_DOWN, K_EOF
-} Key;
 
 /* Read one logical key, decoding arrow-key CSI sequences (ESC [ A/B). */
 static Key read_key(char *ch) {
@@ -264,18 +269,251 @@ static bool read_branch(char *out, size_t n) {
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
-static void print_footer(const char *abs_dir, int interval_sec, const char *note) {
+static void print_footer(int interval_sec, const char *note, bool has_categories) {
     printf("%s\n", EOL());   /* blank separator line (cleared) */
-    printf("  %sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit%s\n",
+
+    /* navigation keys only make sense when there are collapsible categories */
+    printf("  ");
+    if (has_categories)
+        printf("%s\xe2\x86\x91/\xe2\x86\x93%s move · %s\xe2\x8f\x8e%s expand · ",
+               C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET));
+    printf("%sf%s fetch · %sp%s pull · %ss%s switch · %sr%s refresh · %sq%s quit%s\n",
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
            C(COL_BOLD), C(COL_RESET), EOL());
-    int tw = term_width();
-    const char *dir = (tw > 0) ? ellipsize(abs_dir, tw - 18) : abs_dir;
-    printf("  %sinterval %ds · %s", C(COL_DIM), interval_sec, dir);
+
+    printf("  %sinterval %ds", C(COL_DIM), interval_sec);
+    if (opt_dirty_only)
+        printf(" · dirty only");   /* easy-to-forget filter, surfaced in the live view */
     if (note && note[0])
         printf(" · %s", note);
     printf("%s%s\n", C(COL_RESET), EOL());
+}
+
+/* ── Expanded-category set (persists across refreshes) ─────────────────────── */
+/*
+ * Which category headers are currently expanded, keyed by breadcrumb string.
+ * Repos are re-scanned every tick (g_repos is freed and rebuilt), so the
+ * collapse state has to live here, outside the per-tick data. Empty by default
+ * → every category starts collapsed.
+ */
+typedef struct { char **keys; size_t count, cap; } KeySet;
+
+static bool keyset_has(const KeySet *s, const char *key) {
+    for (size_t i = 0; i < s->count; i++)
+        if (strcmp(s->keys[i], key) == 0) return true;
+    return false;
+}
+
+static void keyset_toggle(KeySet *s, const char *key) {
+    for (size_t i = 0; i < s->count; i++) {
+        if (strcmp(s->keys[i], key) == 0) {       /* present → remove */
+            free(s->keys[i]);
+            s->keys[i] = s->keys[--s->count];
+            return;
+        }
+    }
+    if (s->count >= s->cap) {                      /* absent → add */
+        size_t cap = s->cap ? s->cap * 2 : 8;
+        char **tmp = realloc(s->keys, cap * sizeof(char *));
+        if (!tmp) return;
+        s->keys = tmp;
+        s->cap  = cap;
+    }
+    char *dup = strdup(key);
+    if (dup) s->keys[s->count++] = dup;
+}
+
+static void keyset_free(KeySet *s) {
+    for (size_t i = 0; i < s->count; i++) free(s->keys[i]);
+    free(s->keys);
+    s->keys = NULL;
+    s->count = s->cap = 0;
+}
+
+/* ── Per-tick grouping ─────────────────────────────────────────────────────── */
+static Group  *g_groups      = NULL;
+static size_t  g_group_count = 0;
+static size_t  g_group_cap   = 0;
+static VisRow *g_rows        = NULL;
+static size_t  g_row_count   = 0;
+static size_t  g_row_cap     = 0;
+
+static void free_groups(void) {
+    for (size_t i = 0; i < g_group_count; i++) free(g_groups[i].repo_idx);
+    free(g_groups);
+    g_groups = NULL;
+    g_group_count = g_group_cap = 0;
+}
+
+static Group *find_or_add_group(const char *key) {
+    for (size_t i = 0; i < g_group_count; i++)
+        if (strcmp(g_groups[i].key, key) == 0) return &g_groups[i];
+
+    if (g_group_count >= g_group_cap) {
+        size_t cap = g_group_cap ? g_group_cap * 2 : 8;
+        Group *tmp = realloc(g_groups, cap * sizeof(Group));
+        if (!tmp) return NULL;
+        g_groups = tmp;
+        g_group_cap = cap;
+    }
+    Group *g = &g_groups[g_group_count++];
+    memset(g, 0, sizeof(*g));
+    strncpy(g->key, key, sizeof(g->key) - 1);
+    return g;
+}
+
+static void group_push(Group *g, int repo_idx) {
+    if (g->count >= g->cap) {
+        size_t cap = g->cap ? g->cap * 2 : 8;
+        int *tmp = realloc(g->repo_idx, cap * sizeof(int));
+        if (!tmp) return;
+        g->repo_idx = tmp;
+        g->cap = cap;
+    }
+    g->repo_idx[g->count++] = repo_idx;
+}
+
+static const char *repo_basename(int idx) {
+    const char *p = strrchr(g_repos[idx].path, '/');
+    return p ? p + 1 : g_repos[idx].path;
+}
+
+/* Sort repos by display name (case-insensitive), stable on the repo index. */
+static int cmp_repo_idx(const void *a, const void *b) {
+    int ia = *(const int *)a, ib = *(const int *)b;
+    int c = strcasecmp(repo_basename(ia), repo_basename(ib));
+    return c ? c : (ia - ib);
+}
+
+/*
+ * Build the per-tick groups from g_repos. The uncategorized bucket (key "") is
+ * always at index 0. dirty_only hides clean repos entirely (they are still
+ * counted in the summary). A category holding a single repo is folded back into
+ * the flat bucket so a lone repo shows as just its name, not a collapsible
+ * header. Repos within each category are sorted alphabetically here; the
+ * top-level ordering (flat repos interleaved with category headers) is done in
+ * build_visrows. Expand state is applied from the persistent set (the
+ * uncategorized bucket is always open).
+ */
+static void build_groups(const char *abs_dir, bool dirty_only, const KeySet *expanded) {
+    free_groups();
+    find_or_add_group("");   /* uncategorized bucket at index 0 */
+
+    for (size_t i = 0; i < g_repo_count; i++) {
+        Repo *r = &g_repos[i];
+        if (dirty_only && !repo_is_dirty(r)) continue;
+
+        char key[PATH_MAX];
+        if (opt_categories)
+            repo_category(abs_dir, r->path, key, sizeof(key));
+        else
+            key[0] = '\0';            /* categories off: one flat, sorted bucket */
+        Group *g = find_or_add_group(key);
+        if (!g) continue;
+        group_push(g, (int)i);
+        if (r->staged || r->modified || r->untracked) g->n_dirty++;
+        if (r->ahead > 0)                             g->n_ahead++;
+        if (r->behind > 0)                            g->n_behind++;
+    }
+
+    /* fold single-repo categories into the flat bucket, then compact the array */
+    Group *flat = &g_groups[0];
+    size_t keep = 1;
+    for (size_t i = 1; i < g_group_count; i++) {
+        if (g_groups[i].count == 1) {
+            group_push(flat, g_groups[i].repo_idx[0]);
+            free(g_groups[i].repo_idx);
+        } else {
+            if (keep != i) g_groups[keep] = g_groups[i];   /* moves repo_idx ownership */
+            keep++;
+        }
+    }
+    g_group_count = keep;
+
+    /* sort repos within each category; flat-bucket order is set in build_visrows */
+    for (size_t i = 0; i < g_group_count; i++)
+        qsort(g_groups[i].repo_idx, g_groups[i].count, sizeof(int), cmp_repo_idx);
+
+    for (size_t i = 0; i < g_group_count; i++)
+        g_groups[i].expanded = (g_groups[i].key[0] == '\0')
+                             ? true : keyset_has(expanded, g_groups[i].key);
+}
+
+static void rows_push(RowKind kind, int repo_idx, int group_idx) {
+    if (g_row_count >= g_row_cap) {
+        size_t cap = g_row_cap ? g_row_cap * 2 : 32;
+        VisRow *tmp = realloc(g_rows, cap * sizeof(VisRow));
+        if (!tmp) return;
+        g_rows = tmp;
+        g_row_cap = cap;
+    }
+    g_rows[g_row_count++] = (VisRow){ .kind = kind, .repo_idx = repo_idx,
+                                      .group_idx = group_idx };
+}
+
+/*
+ * A top-level entry is either a flat (uncategorized) repo or a category header.
+ * Both are sorted into one alphabetical sequence by their display key so a
+ * category like "core > packages" lands directly under a repo/category "core",
+ * rather than in a separate block below all flat repos.
+ */
+typedef struct {
+    const char *key;     /* repo basename, or the category breadcrumb */
+    bool        is_group;
+    int         idx;     /* repo index (flat) or group index (category) */
+} TopEntry;
+
+static int cmp_topentry(const void *a, const void *b) {
+    const TopEntry *x = a, *y = b;
+    int c = strcasecmp(x->key, y->key);
+    if (c) return c;
+    if (x->is_group != y->is_group) return x->is_group - y->is_group; /* repo first */
+    return x->idx - y->idx;
+}
+
+/* Flatten the groups into the selectable visible-row list the renderer and the
+ * cursor navigation share: flat repos and category headers interleaved
+ * alphabetically, each expanded category followed by its (already sorted) repos. */
+static void build_visrows(void) {
+    g_row_count = 0;
+
+    Group *u = &g_groups[0];                 /* uncategorized / flat bucket */
+    size_t ntop = u->count + (g_group_count - 1);
+    if (ntop == 0) return;
+
+    TopEntry *top = malloc(ntop * sizeof(TopEntry));
+    if (!top) {                              /* OOM: fall back to flat-then-groups */
+        for (size_t j = 0; j < u->count; j++) rows_push(ROW_REPO, u->repo_idx[j], 0);
+        for (size_t gi = 1; gi < g_group_count; gi++) {
+            rows_push(ROW_HEADER, -1, (int)gi);
+            if (g_groups[gi].expanded)
+                for (size_t j = 0; j < g_groups[gi].count; j++)
+                    rows_push(ROW_REPO, g_groups[gi].repo_idx[j], (int)gi);
+        }
+        return;
+    }
+
+    size_t k = 0;
+    for (size_t j = 0; j < u->count; j++)
+        top[k++] = (TopEntry){ repo_basename(u->repo_idx[j]), false, u->repo_idx[j] };
+    for (size_t gi = 1; gi < g_group_count; gi++)
+        top[k++] = (TopEntry){ g_groups[gi].key, true, (int)gi };
+
+    qsort(top, ntop, sizeof(TopEntry), cmp_topentry);
+
+    for (size_t i = 0; i < ntop; i++) {
+        if (!top[i].is_group) {
+            rows_push(ROW_REPO, top[i].idx, 0);
+        } else {
+            int gi = top[i].idx;
+            rows_push(ROW_HEADER, -1, gi);
+            if (g_groups[gi].expanded)
+                for (size_t j = 0; j < g_groups[gi].count; j++)
+                    rows_push(ROW_REPO, g_groups[gi].repo_idx[j], gi);
+        }
+    }
+    free(top);
 }
 
 /* ── Public entry point ────────────────────────────────────────────────────── */
@@ -293,9 +531,11 @@ void run_watch(const char *abs_dir) {
     enter_raw_mode();
 
     /* pending action applied on the next scan: 0 = plain refresh, else a key */
-    int  action = 0;
-    char branch[256] = "";
-    char note[128]   = "";
+    int    action   = 0;
+    char   branch[256] = "";
+    char   note[128]   = "";
+    KeySet expanded    = { 0 };   /* categories the user has opened */
+    int    cursor      = -1;      /* selected visible row, -1 = no highlight yet */
 
     while (!g_watch_stop) {
         /* free the previous tick's scan here (not before the wait) so g_paths
@@ -340,54 +580,100 @@ void run_watch(const char *abs_dir) {
         process_all_repos(abs_dir);
         if (spinning) spinner_stop();
 
-        ColWidths w = compute_col_widths();
-
-        /* redraw in place: home, draw (each line cleared to its end via EOL so
-         * a narrower frame leaves no stale columns), then clear leftover rows */
-        int tw = term_width();
-        printf(CURSOR_HOME);
-        printf("%sScanned:%s %s%s\n%s\n", C(COL_BOLD), C(COL_RESET),
-               tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir, EOL(), EOL());
-        print_status_table(&w, opt_dirty_only);
-        print_footer(abs_dir, opt_watch_interval, note);
-        printf(CLEAR_TO_END);
-        fflush(stdout);
-
         /* clear one-shot action state so it does not repeat on the next tick */
         opt_fetch = opt_pull = opt_switch = false;
         action = 0;
 
-        char key = 0;
-        WatchEvent ev = wait_for_event(opt_watch_interval, &key);
-        if (ev == EV_QUIT)    break;
-        if (ev == EV_TIMEOUT) { note[0] = '\0'; continue; }
+        build_groups(abs_dir, opt_dirty_only, &expanded);
+        /* size the STATUS column for the widest header aggregate (breadcrumbs
+         * don't widen NAME — they span the row at render time) */
+        int max_status = 0;
+        for (size_t gi = 1; gi < g_group_count; gi++)
+            max_status = MAX(max_status, group_status_width(&g_groups[gi]));
+        ColWidths w = compute_col_widths(max_status);
 
-        switch (key) {
-            case 'f':
-                action = 'f';
-                snprintf(note, sizeof(note), "fetched");
-                break;
-            case 'p':
-                action = 'p';
-                snprintf(note, sizeof(note), "pulled");
-                break;
-            case 's':
-                /* g_paths is still populated — gather recent branches for the
-                 * picker, then prompt */
-                collect_recent_branches();
-                if (read_branch(branch, sizeof(branch))) {
-                    action = 's';
-                    snprintf(note, sizeof(note), "switched to %s", branch);
+        /* inner loop: re-render on cursor moves and expand/collapse without
+         * rescanning; break out to rescan on the interval, 'r', or an action */
+        struct timespec tick_start;
+        clock_gettime(CLOCK_MONOTONIC, &tick_start);
+        const long tick_ms = (long)opt_watch_interval * 1000;
+
+        for (;;) {
+            build_visrows();
+            /* cursor may be -1 (no selection until the first arrow key); compare
+             * as int so -1 isn't promoted to a huge size_t and clamped to the end */
+            if (g_row_count == 0)                      cursor = -1;
+            else if (cursor >= (int)g_row_count)       cursor = (int)g_row_count - 1;
+
+            /* redraw in place: home, draw (each line cleared to its end via EOL
+             * so a narrower frame leaves no stale columns), then clear the rest */
+            int tw = term_width();
+            printf(CURSOR_HOME);
+            printf("%sScanned:%s %s%s\n%s\n", C(COL_BOLD), C(COL_RESET),
+                   tw > 0 ? ellipsize(abs_dir, tw - 10) : abs_dir, EOL(), EOL());
+            print_grouped_table(&w, opt_dirty_only, g_groups, g_group_count,
+                                g_rows, g_row_count, cursor);
+            print_footer(opt_watch_interval, note, g_group_count > 1);
+            printf(CLEAR_TO_END);
+            fflush(stdout);
+
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            long elapsed = (now.tv_sec - tick_start.tv_sec) * 1000
+                         + (now.tv_nsec - tick_start.tv_nsec) / 1000000;
+            long remaining = tick_ms - elapsed;
+            if (remaining <= 0) { note[0] = '\0'; break; }   /* time to rescan */
+
+            Key  k  = K_NONE;
+            char ch = 0;
+            WatchEvent ev = wait_for_event((int)remaining, &k, &ch);
+            if (ev == EV_QUIT)    goto done;
+            if (ev == EV_TIMEOUT) { note[0] = '\0'; break; }
+
+            if (k == K_UP) {
+                if (cursor < 0)      cursor = (int)g_row_count - 1;  /* enter from bottom */
+                else if (cursor > 0) cursor--;
+                continue;
+            }
+            if (k == K_DOWN) {
+                if (cursor < 0)                             cursor = 0;  /* enter from top */
+                else if ((size_t)cursor + 1 < g_row_count)  cursor++;
+                continue;
+            }
+            if (k == K_ENTER) {
+                if (cursor >= 0 && g_rows[cursor].kind == ROW_HEADER) {
+                    keyset_toggle(&expanded, g_groups[g_rows[cursor].group_idx].key);
+                    /* re-apply expand state in place — no rescan needed */
+                    build_groups(abs_dir, opt_dirty_only, &expanded);
                 }
-                free_recent_branches();
-                break;
-            case 'r':
-            default:
-                note[0] = '\0';   /* immediate refresh */
-                break;
+                continue;
+            }
+            if (k == K_CHAR) {
+                if (ch == 'f') { action = 'f';
+                    snprintf(note, sizeof(note), "fetched"); break; }
+                if (ch == 'p') { action = 'p';
+                    snprintf(note, sizeof(note), "pulled");  break; }
+                if (ch == 's') {
+                    /* g_paths is still populated — gather recent branches for
+                     * the picker, then prompt */
+                    collect_recent_branches();
+                    if (read_branch(branch, sizeof(branch))) {
+                        action = 's';
+                        snprintf(note, sizeof(note), "switched to %s", branch);
+                    }
+                    free_recent_branches();
+                    break;
+                }
+                if (ch == 'r') { note[0] = '\0'; break; }   /* immediate refresh */
+            }
+            /* any other key (incl. Esc, Tab) — ignore and keep the view */
         }
     }
 
+done:
+    free_groups();
+    free(g_rows);
+    keyset_free(&expanded);
     free_repo_collection();
     free_recent_branches();
     restore_terminal();

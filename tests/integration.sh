@@ -454,6 +454,21 @@ else
     failed=$((failed + 1))
 fi
 
+# ── default mode: alphabetical sort ───────────────────────────────────────────
+printf "\nalphabetical sort\n"
+SORT="$WORK/sorttest"
+# create in deliberately non-alphabetical order; names mix case
+for n in zebra alpha Mango bravo; do mkgit "$SORT/$n"; done
+out=$("$GITLS" --no-color -d 1 "$SORT" 2>&1)
+# the four repo rows must appear case-insensitively sorted: alpha bravo Mango zebra
+order=$(printf '%s\n' "$out" | grep -oE '(alpha|bravo|Mango|zebra)' | head -4 | tr '\n' ' ')
+if [ "$order" = "alpha bravo Mango zebra " ]; then
+    printf "  ok  default table sorted alphabetically (case-insensitive)\n"; passed=$((passed + 1))
+else
+    printf "FAIL  default table sorted alphabetically\n     got: %s\n" "$order"
+    failed=$((failed + 1))
+fi
+
 # ── watch mode guards ─────────────────────────────────────────────────────────
 printf "\nwatch mode guards\n"
 WD="$WORK/watchguard"; mkgit "$WD/repo"

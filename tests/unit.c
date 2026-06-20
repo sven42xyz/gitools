@@ -83,11 +83,46 @@ static void test_ellipsize(void) {
     CHECK("max_w < 2 returns full",  strcmp(ellipsize("abcdef", 1), "abcdef") == 0);
 }
 
+/* ── repo_category ──────────────────────────────────────────────────────────── */
+static void test_repo_category(void) {
+    printf("\nrepo_category\n");
+    char out[PATH_MAX];
+
+    repo_category("/p/tt", "/p/tt/foo", out, sizeof(out));
+    CHECK("direct child -> empty",          strcmp(out, "") == 0);
+
+    repo_category("/p/tt", "/p/tt/core/auth", out, sizeof(out));
+    CHECK("one level -> single segment",    strcmp(out, "core") == 0);
+
+    repo_category("/p/tt", "/p/tt/core/packages/auth", out, sizeof(out));
+    CHECK("two levels -> chevron breadcrumb", strcmp(out, "core \xe2\x80\xba packages") == 0);
+
+    repo_category("/p/tt", "/p/tt/a/b/c/d", out, sizeof(out));
+    CHECK("full breadcrumb, chevron joins",  strcmp(out, "a \xe2\x80\xba b \xe2\x80\xba c") == 0);
+
+    /* trailing slash on abs_dir must not shift the boundary */
+    repo_category("/p/tt/", "/p/tt/core/auth", out, sizeof(out));
+    CHECK("trailing slash on root",          strcmp(out, "core") == 0);
+
+    /* repo identical to root -> empty */
+    repo_category("/p/tt", "/p/tt", out, sizeof(out));
+    CHECK("repo == root -> empty",           strcmp(out, "") == 0);
+
+    /* sibling dir sharing a prefix must not be treated as nested */
+    repo_category("/p/tt", "/p/ttx/foo", out, sizeof(out));
+    CHECK("prefix-only sibling -> empty",    strcmp(out, "") == 0);
+
+    /* root is filesystem root */
+    repo_category("/", "/srv/repo", out, sizeof(out));
+    CHECK("root '/' one level",              strcmp(out, "srv") == 0);
+}
+
 /* ── main ───────────────────────────────────────────────────────────────────── */
 int main(void) {
     test_utf8_width();
     test_relative_time();
     test_ellipsize();
+    test_repo_category();
 
     printf("\n%d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;
