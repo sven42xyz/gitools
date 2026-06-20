@@ -334,6 +334,7 @@ max_depth=3
 skip_dirs=build,dist,tmp,*.egg-info
 watch_interval=5
 dirty_only=false
+categories=true
 no_color=false
 ```
 
@@ -344,6 +345,7 @@ no_color=false
 | `skip_dirs` | Comma-separated directory names to skip (glob patterns supported) | — |
 | `watch_interval` | Default refresh interval (seconds) for `-w` | `3` |
 | `dirty_only` | `true`/`1` to filter to dirty repos by default (override per-run with `--no-dirty`) | `false` |
+| `categories` | `false`/`0` to disable folder grouping in watch mode (`-w`); shows one flat, alphabetical list | `true` |
 | `no_color` | `true`/`1` to disable colours | `false` |
 
 CLI flags always override the config file. Passing an explicit directory

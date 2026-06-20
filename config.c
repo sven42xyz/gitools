@@ -121,6 +121,11 @@ void load_config(void) {
         } else if (strcmp(key, "no_color") == 0) {
             if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
                 opt_no_color = true;
+
+        } else if (strcmp(key, "categories") == 0) {
+            /* default is on, so only an explicit false/0 turns it off */
+            if (strcmp(val, "false") == 0 || strcmp(val, "0") == 0)
+                opt_categories = false;
         }
         next_line: ;   /* jump target for strdup failure in skip_dirs */
     }

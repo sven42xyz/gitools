@@ -25,6 +25,7 @@ bool   opt_pull               = false;
 bool   opt_watch              = false;
 int    opt_watch_interval     = 3;
 bool   opt_dirty_only         = false;
+bool   opt_categories         = true;   /* group repos by folder in watch mode */
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
@@ -77,6 +78,7 @@ static void usage(const char *prog) {
         "  skip_dirs=build,dist,tmp\n"
         "  watch_interval=5\n"
         "  dirty_only=true\n"
+        "  categories=false\n"
         "  no_color=true\n",
         prog);
 }

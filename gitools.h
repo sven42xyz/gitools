@@ -116,6 +116,7 @@ extern bool   opt_pull;
 extern bool   opt_watch;
 extern int    opt_watch_interval;
 extern bool   opt_dirty_only;
+extern bool   opt_categories;
 extern char   opt_default_dir[PATH_MAX];
 extern char **opt_extra_skip;
 extern size_t opt_extra_skip_count;

@@ -387,6 +387,33 @@ def main():
     w.finish()
     subprocess.run(["rm", "-rf", deep])
 
+    # ── 8. categories=false: one flat, alphabetical list, no folders ──
+    nocat = tempfile.mkdtemp(prefix="gitls-nocat-")
+    make_repo(os.path.join(nocat, "flat"))
+    make_repo(os.path.join(nocat, "core", "packages", "auth"))
+    make_repo(os.path.join(nocat, "core", "packages", "api"))
+    make_repo(os.path.join(nocat, "lib", "zlib"))
+    cfg = os.path.join(nocat, "gitls.conf")
+    with open(cfg, "w") as f:
+        f.write("categories=false\n")
+    os.environ["GITLS_CONFIG"] = cfg          # inherited by the watcher via execv
+    try:
+        w = Watcher(nocat)
+        raw = w.drain(1.5)
+        s = (lambda t: (t.feed(raw), t.text())[1])(Term())
+        w.finish()
+    finally:
+        del os.environ["GITLS_CONFIG"]
+    check("no category breadcrumbs when disabled", "›" not in s)
+    check("no folder chevrons when disabled", "▶" not in s and "▼" not in s)
+    # every repo (including the nested ones) is shown flat...
+    check("nested repos shown flat", all(n in s for n in ("api", "auth", "flat", "zlib")))
+    # ...alphabetically sorted by name
+    check("flat list sorted alphabetically", ordered(s, ["api", "auth", "flat", "zlib"]))
+    # no collapsible categories -> footer drops the nav hints
+    check("footer hides nav when categories off", "expand" not in s)
+    subprocess.run(["rm", "-rf", nocat])
+
     subprocess.run(["rm", "-rf", work])
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0

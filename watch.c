@@ -405,7 +405,10 @@ static void build_groups(const char *abs_dir, bool dirty_only, const KeySet *exp
         if (dirty_only && !repo_is_dirty(r)) continue;
 
         char key[PATH_MAX];
-        repo_category(abs_dir, r->path, key, sizeof(key));
+        if (opt_categories)
+            repo_category(abs_dir, r->path, key, sizeof(key));
+        else
+            key[0] = '\0';            /* categories off: one flat, sorted bucket */
         Group *g = find_or_add_group(key);
         if (!g) continue;
         group_push(g, (int)i);
