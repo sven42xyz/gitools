@@ -20,7 +20,8 @@ Collapsible category folders in the watch-mode table.
 - The table is sized to its content (never stretched to fill the screen); long
   breadcrumbs overflow the row instead of widening the NAME column.
 
-Status: implemented on branch `watch-categories`, not yet merged or tagged.
+Status: released as v0.5.0 (2026-08-27), together with the codebase-review
+hardening pass.
 
 ## 0.6.0 — Interactive repo panel
 
