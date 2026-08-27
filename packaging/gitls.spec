@@ -1,5 +1,5 @@
 Name:           gitls
-Version:        0.5.0
+Version:        0.5.1
 Release:        1%{?dist}
 Summary:        A fast, minimal tool to inspect and act on multiple git repositories
 
@@ -36,6 +36,10 @@ It also supports bulk branch switching with the -s flag.
 %{_datadir}/doc/gitls/gitlsrc.example
 
 %changelog
+* Thu Aug 27 2026 Sven Siepermann <sven@siepermann.dev> - 0.5.1-1
+- Packaging only: Homebrew formula no longer inherits Homebrew's injected
+  -march=<cpu> flag, which broke builds on hosts where the detected CPU and
+  the active toolchain disagree
 * Thu Aug 27 2026 Sven Siepermann <sven@siepermann.dev> - 0.5.0-1
 - Watch mode: collapsible category folders grouped by path breadcrumb, with
   aggregated folder status and cursor navigation; categories config key
