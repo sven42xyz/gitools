@@ -1,5 +1,5 @@
 class Gitls < Formula
-  desc "A fast, minimal tool to inspect and act on multiple git repositories"
+  desc "Fast, minimal tool to inspect and act on multiple git repositories"
   homepage "https://github.com/sven42xyz/gitools"
   url "https://github.com/sven42xyz/gitools/archive/refs/tags/v0.5.1.tar.gz"
   sha256 "1f7ea17deec740c9235421444e951dfc204c053b95b3c5d29bb64b19ceefc3e9"

@@ -1,7 +1,7 @@
 Name:           gitls
 Version:        0.5.1
 Release:        1%{?dist}
-Summary:        A fast, minimal tool to inspect and act on multiple git repositories
+Summary:        Fast, minimal tool to inspect and act on multiple git repositories
 
 License:        MIT
 URL:            https://github.com/sven42xyz/gitools
