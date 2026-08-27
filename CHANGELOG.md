@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-08-27
+
+Packaging-only release — no changes to `gitls` itself.
+
+### Fixed
+- Homebrew: the formula no longer inherits Homebrew's injected `-march=<cpu>`
+  optimisation flag (`HOMEBREW_OPTFLAGS`). The compiler shim appends it to every
+  invocation, so on installations where the detected CPU and the active
+  toolchain disagree, clang rejects the architecture name and the build fails
+  before it starts (`unsupported argument '<cpu>' to option '-march='`). gitls
+  is I/O-bound and already compiles with `-O2`, so the CPU tuning bought
+  nothing.
+
 ## [0.5.0] - 2026-08-27
 
 ### Added

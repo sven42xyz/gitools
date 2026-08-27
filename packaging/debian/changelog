@@ -1,3 +1,11 @@
+gitls (0.5.1-1) unstable; urgency=low
+
+  * Packaging only: Homebrew formula no longer inherits Homebrew's injected
+    -march=<cpu> flag, which broke builds on hosts where the detected CPU and
+    the active toolchain disagree.
+
+ -- Sven Siepermann <sven@siepermann.dev>  Thu, 27 Aug 2026 00:00:00 +0000
+
 gitls (0.5.0-1) unstable; urgency=low
 
   * Watch mode: collapsible category folders with aggregated status and cursor
