@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-08-27
+
+### Added
+- Watch mode (`-w`) groups repositories into collapsible category folders.
+  Repos are bucketed by their path breadcrumb relative to the scan root, joined
+  with a chevron (`core › packages`); repos directly under the root stay flat,
+  and single-repo folders fold back to just the repo name. Category headers
+  carry an aggregated status (`✓` / `↑ ↓ ●`) in the STATUS column and are shown
+  in cyan + bold. `↑`/`↓` move a cursor, `Enter` expands/collapses, and the
+  expand state survives refreshes. Nav hints appear only when categories exist.
+- `~/.gitlsrc` key `categories` (default `true`) — set it to `false` for one
+  flat, alphabetically sorted list in watch mode.
+- `docs/ROADMAP.md` — the plan through 1.0.0.
+
+### Changed
+- The one-shot status table is now sorted alphabetically by repo name
+  (case-insensitive) instead of directory-traversal order, matching watch mode.
+  Sorting is display-only — summary counts and column widths are unaffected.
+- The watch-mode table is sized to its content instead of being stretched to the
+  terminal width; long breadcrumbs overflow the row rather than widening the
+  NAME column.
+- The watch footer drops the redundant scan path and shows a "dirty only" hint
+  while `--dirty` is active.
+
+### Fixed
+- `run_git_capture()` no longer hangs when a child process fills the pipe —
+  `read()` is retried on `EINTR`. The same applies to `waitpid()`, which could
+  report a spurious clean exit and leave a zombie behind.
+- Watch mode handles `SIGWINCH`: column widths are recomputed and the table is
+  redrawn when the terminal is resized.
+- `SIGINT` / `SIGTERM` / `SIGWINCH` are blocked in worker threads, so only the
+  main thread handles them.
+- The watch cursor stays anchored to the selected repo / category across
+  rescans.
+- Table alignment with wide and zero-width characters: display width is now
+  measured with wcwidth-style tables (combining marks = 0, CJK / emoji = 2).
+- `max_depth` from `~/.gitlsrc` is validated (errno / `INT_MAX`), and a bare `~`
+  as `default_dir` is expanded.
+- The watch footer no longer offers fetch / pull when git is unavailable.
+- The footer note is derived from the actual result, so a failed action reads
+  "… failed" instead of reporting success.
+- `usage()` prints to stdout for an explicit `-h`, not to stderr.
+
 ## [0.4.0] - 2026-06-13
 
 ### Added

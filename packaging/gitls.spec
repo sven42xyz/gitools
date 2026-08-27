@@ -1,5 +1,5 @@
 Name:           gitls
-Version:        0.4.0
+Version:        0.5.0
 Release:        1%{?dist}
 Summary:        A fast, minimal tool to inspect and act on multiple git repositories
 
@@ -36,6 +36,12 @@ It also supports bulk branch switching with the -s flag.
 %{_datadir}/doc/gitls/gitlsrc.example
 
 %changelog
+* Thu Aug 27 2026 Sven Siepermann <sven@siepermann.dev> - 0.5.0-1
+- Watch mode: collapsible category folders grouped by path breadcrumb, with
+  aggregated folder status and cursor navigation; categories config key
+- Default status table sorted alphabetically
+- Fix: read()/waitpid() EINTR retries, SIGWINCH handling, signal blocking in
+  worker threads, wcwidth-style display width for wide/zero-width characters
 * Sat Jun 13 2026 Sven Siepermann <sven@siepermann.dev> - 0.4.0-1
 - Watch mode (-w/--watch): live in-place table with interactive keys (fetch,
   pull, switch, refresh) and a recent-branch picker
