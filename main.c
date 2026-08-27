@@ -25,6 +25,7 @@ bool   opt_pull               = false;
 bool   opt_watch              = false;
 int    opt_watch_interval     = 3;
 bool   opt_dirty_only         = false;
+bool   opt_categories         = true;   /* group repos by folder in watch mode */
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
@@ -48,8 +49,9 @@ static bool is_all_digits(const char *s) {
 }
 
 /* ── Usage ─────────────────────────────────────────────────────────────────── */
-static void usage(const char *prog) {
-    fprintf(stderr,
+/* out is stdout for an explicit -h/--help, stderr when reporting a usage error. */
+static void usage(FILE *out, const char *prog) {
+    fprintf(out,
         "Usage: %s [fetch|pull] [OPTIONS] [DIRECTORY]\n"
         "\n"
         "Recursively scan DIRECTORY (default: .) for git repositories\n"
@@ -77,6 +79,7 @@ static void usage(const char *prog) {
         "  skip_dirs=build,dist,tmp\n"
         "  watch_interval=5\n"
         "  dirty_only=true\n"
+        "  categories=false\n"
         "  no_color=true\n",
         prog);
 }
@@ -113,7 +116,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (i == subcommand_idx) continue;
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            usage(argv[0]);
+            usage(stdout, argv[0]);
             return 0;
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("gitls %s\n", VERSION_STRING);
@@ -161,7 +164,7 @@ int main(int argc, char **argv) {
             user_gave_dir = true;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            usage(argv[0]);
+            usage(stderr, argv[0]);
             return 1;
         }
     }
@@ -239,7 +242,7 @@ int main(int argc, char **argv) {
     const char *verb = (opt_switch && !opt_fetch && !opt_pull) ? "Switching:"
                                                                : "Scanning:";
 
-    char spin_label[PATH_MAX + 16];
+    char spin_label[PATH_MAX + 64];
     snprintf(spin_label, sizeof(spin_label), "%s%s%s %s",
              C(COL_BOLD), verb, C(COL_RESET), abs_dir);
     spinner_start(spin_label);
@@ -247,7 +250,7 @@ int main(int argc, char **argv) {
     process_all_repos(abs_dir);
     spinner_stop();
 
-    ColWidths w = compute_col_widths();
+    ColWidths w = compute_col_widths(0);
 
     /* ── status table header ── */
     int tw = term_width();

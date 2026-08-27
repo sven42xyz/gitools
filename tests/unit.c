@@ -48,12 +48,25 @@ static void test_utf8_width(void) {
     CHECK("equal ≡ (3-byte)",        utf8_width("\xe2\x89\xa1") == 1);
     CHECK("↑3 (symbol + digit)",     utf8_width("\xe2\x86\x91" "3") == 2);
     CHECK("↑3↓2 (diverged)",         utf8_width("\xe2\x86\x91" "3" "\xe2\x86\x93" "2") == 4);
-    CHECK("4-byte char",             utf8_width("\xf0\x9f\x98\x80") == 1);
     CHECK("mixed ascii+utf8",        utf8_width("ok\xe2\x86\x91") == 3);
-    /* truncated / incomplete sequences must not read past the null terminator */
-    CHECK("truncated 3-byte seq",    utf8_width("\xe2\x86") == 0);
-    CHECK("truncated 4-byte seq",    utf8_width("\xf0\x9f\x98") == 0);
-    CHECK("ascii before truncated",  utf8_width("ab\xe2\x86") == 2);
+
+    /* wide East Asian characters occupy two terminal columns */
+    CHECK("CJK 中 (wide)",            utf8_width("\xe4\xb8\xad") == 2);
+    CHECK("CJK 中文 (two wide)",      utf8_width("\xe4\xb8\xad\xe6\x96\x87") == 4);
+    CHECK("Hangul 한 (wide)",         utf8_width("\xed\x95\x9c") == 2);
+    CHECK("fullwidth Ａ (wide)",      utf8_width("\xef\xbc\xa1") == 2);
+    CHECK("emoji 😀 (wide)",          utf8_width("\xf0\x9f\x98\x80") == 2);
+    CHECK("ascii + CJK width",       utf8_width("ab\xe4\xb8\xad") == 4);
+
+    /* combining marks add zero width (e + combining acute = one column) */
+    CHECK("combining acute (0-width)", utf8_width("e\xcc\x81") == 1);
+    CHECK("zero-width space",          utf8_width("a\xe2\x80\x8b" "b") == 2);
+
+    /* truncated / incomplete sequences must terminate and not read past the
+     * null terminator; the stray lead byte is counted as a single column */
+    CHECK("truncated 3-byte seq",    utf8_width("\xe2\x86") == 1);
+    CHECK("truncated 4-byte seq",    utf8_width("\xf0\x9f\x98") == 1);
+    CHECK("ascii before truncated",  utf8_width("ab\xe2\x86") == 3);
 }
 
 /* ── relative_time ──────────────────────────────────────────────────────────── */
@@ -81,6 +94,42 @@ static void test_ellipsize(void) {
     CHECK("long string truncated",   strcmp(ellipsize("abcdefghij", 5), "\xe2\x80\xa6ghij") == 0);
     CHECK("truncated width fits",    utf8_width(ellipsize("abcdefghij", 5)) == 5);
     CHECK("max_w < 2 returns full",  strcmp(ellipsize("abcdef", 1), "abcdef") == 0);
+    /* wide (2-col) characters: the truncated result must still fit the budget */
+    CHECK("wide string fits budget", utf8_width(ellipsize("\xe4\xb8\xad\xe6\x96\x87\xe4\xb8\xad\xe6\x96\x87\xe4\xb8\xad", 6)) <= 6);
+}
+
+/* ── repo_category ──────────────────────────────────────────────────────────── */
+static void test_repo_category(void) {
+    printf("\nrepo_category\n");
+    char out[PATH_MAX];
+
+    repo_category("/p/tt", "/p/tt/foo", out, sizeof(out));
+    CHECK("direct child -> empty",          strcmp(out, "") == 0);
+
+    repo_category("/p/tt", "/p/tt/core/auth", out, sizeof(out));
+    CHECK("one level -> single segment",    strcmp(out, "core") == 0);
+
+    repo_category("/p/tt", "/p/tt/core/packages/auth", out, sizeof(out));
+    CHECK("two levels -> chevron breadcrumb", strcmp(out, "core \xe2\x80\xba packages") == 0);
+
+    repo_category("/p/tt", "/p/tt/a/b/c/d", out, sizeof(out));
+    CHECK("full breadcrumb, chevron joins",  strcmp(out, "a \xe2\x80\xba b \xe2\x80\xba c") == 0);
+
+    /* trailing slash on abs_dir must not shift the boundary */
+    repo_category("/p/tt/", "/p/tt/core/auth", out, sizeof(out));
+    CHECK("trailing slash on root",          strcmp(out, "core") == 0);
+
+    /* repo identical to root -> empty */
+    repo_category("/p/tt", "/p/tt", out, sizeof(out));
+    CHECK("repo == root -> empty",           strcmp(out, "") == 0);
+
+    /* sibling dir sharing a prefix must not be treated as nested */
+    repo_category("/p/tt", "/p/ttx/foo", out, sizeof(out));
+    CHECK("prefix-only sibling -> empty",    strcmp(out, "") == 0);
+
+    /* root is filesystem root */
+    repo_category("/", "/srv/repo", out, sizeof(out));
+    CHECK("root '/' one level",              strcmp(out, "srv") == 0);
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────── */
@@ -88,6 +137,7 @@ int main(void) {
     test_utf8_width();
     test_relative_time();
     test_ellipsize();
+    test_repo_category();
 
     printf("\n%d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;

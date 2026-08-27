@@ -60,14 +60,18 @@ void load_config(void) {
             if (val[0] == '~' && val[1] == '/' && pw) {
                 snprintf(opt_default_dir, sizeof(opt_default_dir),
                          "%s/%s", pw->pw_dir, val + 2);
+            } else if (strcmp(val, "~") == 0 && pw) {
+                snprintf(opt_default_dir, sizeof(opt_default_dir), "%s", pw->pw_dir);
             } else {
                 snprintf(opt_default_dir, sizeof(opt_default_dir), "%s", val);
             }
 
         } else if (strcmp(key, "max_depth") == 0) {
             char *end;
-            int d = (int)strtol(val, &end, 10);
-            if (*end == '\0' && d >= 0) opt_max_depth = d;
+            errno = 0;
+            long d = strtol(val, &end, 10);
+            if (*end == '\0' && errno != ERANGE && d >= 0 && d <= INT_MAX)
+                opt_max_depth = (int)d;
 
         } else if (strcmp(key, "skip_dirs") == 0) {
 #define MAX_SKIP_DIRS 64
@@ -121,6 +125,11 @@ void load_config(void) {
         } else if (strcmp(key, "no_color") == 0) {
             if (strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
                 opt_no_color = true;
+
+        } else if (strcmp(key, "categories") == 0) {
+            /* default is on, so only an explicit false/0 turns it off */
+            if (strcmp(val, "false") == 0 || strcmp(val, "0") == 0)
+                opt_categories = false;
         }
         next_line: ;   /* jump target for strdup failure in skip_dirs */
     }
