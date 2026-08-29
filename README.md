@@ -45,8 +45,14 @@ lets you trigger those actions interactively.
 
 ```sh
 brew tap sven42xyz/tap
+brew trust --tap sven42xyz/tap
 brew install gitls
 ```
+
+Homebrew requires formulae from third-party taps to be trusted before it will
+load them, so `brew trust` is a step of its own — without it the install stops
+with an error rather than prompting. It records the tap in
+`~/.homebrew/trust.json` and does not ask again.
 
 ### Build from source
 
