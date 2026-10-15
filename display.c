@@ -664,13 +664,19 @@ int branch_screen_rows(void) {
     return th > 0 ? MAX(3, th - BS_CHROME_ROWS) : 20;
 }
 
+/*
+ * marked[i] flags branches queued for deletion (may be NULL). When prompt is
+ * set it replaces the key hints, e.g. the delete confirmation.
+ */
 void print_branch_screen(const char *repo_path, const BranchList *bl,
-                         int cursor, int offset, int visible, const char *note) {
+                         const bool *marked, int cursor, int offset,
+                         int visible, const char *note, const char *prompt) {
     const char *name = path_basename(repo_path);
     const char *head = "";
-    size_t n_stale = 0, n_safe = 0;
+    size_t n_stale = 0, n_safe = 0, n_marked = 0;
     for (size_t i = 0; i < bl->count; i++) {
         if (bl->branches[i].is_head) head = bl->branches[i].name;
+        if (marked && marked[i])                n_marked++;
         if (bl->branches[i].reason != STR_NONE) n_stale++;
         if (branch_safe(&bl->branches[i]))     n_safe++;
     }
@@ -698,7 +704,7 @@ void print_branch_screen(const char *repo_path, const BranchList *bl,
         w_time = MAX(w_time, utf8_width(relative_time(b->last_commit)));
     }
     if (w_up > BS_UPSTREAM_MAX) w_up = BS_UPSTREAM_MAX;
-    /* lead(2) + head marker(2) + gaps(2 each) + a STATE column of ~15 */
+    /* lead(2) + head/mark marker(2) + gaps(2 each) + a STATE column of ~15 */
     if (tw > 0) {
         int rest = 4 + w_up + 2 + w_sync + 2 + w_time + 2 + 15;
         if (w_name > tw - rest) w_name = MAX(12, tw - rest);
@@ -718,11 +724,20 @@ void print_branch_screen(const char *repo_path, const BranchList *bl,
         const char *col;
         char sync[32];
 
+        bool mk = marked && marked[i];
         if (i == cursor) printf("%s\xe2\x96\xb8%s ", C(COL_GREEN), C(COL_RESET));
         else             printf("  ");
-        printf("%s%s ", b->is_head ? C(COL_YELLOW) : "", b->is_head ? "*" : " ");
+        /* marker: * = checked out, ✗ = marked for deletion (HEAD can't be) */
+        if (b->is_head)  printf("%s* ", C(COL_YELLOW));
+        else if (mk)     printf("%s\xe2\x9c\x97 ", C(COL_RED));
+        else             printf("  ");
 
-        printf("%s", b->is_head ? "" : C(b->reason != STR_NONE ? COL_CYAN : COL_RESET));
+        const char *ncol = b->is_head                ? ""
+                         : mk                        ? COL_RED
+                         : branch_exempt_reason(b)   ? COL_DIM
+                         : b->reason != STR_NONE     ? COL_CYAN
+                         :                             COL_RESET;
+        printf("%s", C(ncol));
         write_col(b->name, w_name);
         printf("%s  ", C(COL_RESET));
 
@@ -752,15 +767,23 @@ void print_branch_screen(const char *repo_path, const BranchList *bl,
                C(COL_CYAN), n_stale, C(COL_RESET), n_safe);
     else
         printf("%sno stale branches%s", C(COL_GREEN), C(COL_RESET));
+    if (n_marked)
+        printf(" \xc2\xb7 %s%zu marked%s", C(COL_RED), n_marked, C(COL_RESET));
     if (!bl->default_branch[0])
         printf(" \xc2\xb7 %sno default branch \xe2\x80\x94 merged/squashed undetectable%s",
                C(COL_DIM), C(COL_RESET));
     printf("%s\n", EOL());
 
-    printf("  %s\xe2\x86\x91/\xe2\x86\x93%s move \xc2\xb7 %sr%s reload \xc2\xb7 "
-           "%sEsc%s back \xc2\xb7 %sq%s quit%s\n",
-           C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
-           C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET), EOL());
+    if (prompt && prompt[0])
+        printf("  %s%s\n", prompt, EOL());
+    else
+        printf("  %s\xe2\x86\x91/\xe2\x86\x93%s move \xc2\xb7 %sspace%s mark \xc2\xb7 "
+               "%sa%s mark safe \xc2\xb7 %sd%s delete \xc2\xb7 %sr%s reload \xc2\xb7 "
+               "%sEsc%s back \xc2\xb7 %sq%s quit%s\n",
+               C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
+               C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
+               C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
+               C(COL_BOLD), C(COL_RESET), EOL());
     if (note && note[0])
         printf("  %s%s%s%s\n", C(COL_DIM), note, C(COL_RESET), EOL());
 }

@@ -474,6 +474,48 @@ def main():
           and "default: main" not in back)
     check("clean exit from the table after the screen",
           os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0)
+
+    # ── 10. deleting branches from the branch screen ──
+    def branches(path):
+        out = subprocess.run(["git", "branch", "--format=%(refname:short)"], cwd=path,
+                             capture_output=True, text=True)
+        return out.stdout.split()
+
+    os.environ["GITLS_CONFIG"] = cfg
+    try:
+        w = Watcher(br)
+        t = Term()
+        t.feed(w.drain(1.2))
+        def key(data, wait=0.6):
+            w.send(data)
+            t.feed(w.drain(wait))
+            return t.text()
+        key(b"\x1b[B", 0.4)
+        key(b"\r", 1.2)                     # open: main, done, keep, wip
+        key(b"a")                            # mark every safe branch (done)
+        scr = key(b"d")
+        check("safe delete asks y/N", "Delete 1 branch? y/N" in scr)
+        scr = key(b"y", 1.2)
+        check("y deletes the marked branch", "done" not in branches(repo))
+        check("note reports the delete", "deleted 1" in scr)
+        check("protected branch untouched", "keep" in branches(repo))
+
+        # rows now: main (HEAD), wip (newer), keep → one down is the unmerged wip
+        scr = key(b"\x1b[B", 0.3)
+        check("cursor on the unmerged branch", "▸" in line_with(scr, " wip "))
+        scr = key(b"d")
+        check("unmerged delete warns", "unmerged work (wip)" in scr)
+        key(b"y", 0.8)
+        check("lowercase y does not delete unmerged", "wip" in branches(repo))
+        key(b"d")
+        key(b"Y", 1.2)
+        check("uppercase Y deletes unmerged", "wip" not in branches(repo))
+
+        scr = key(b"\x1b[A\x1b[A" + b" ", 0.6)   # top row = main (HEAD)
+        check("HEAD can't be marked", "can't delete main (checked out)" in scr)
+        w.finish()
+    finally:
+        del os.environ["GITLS_CONFIG"]
     subprocess.run(["rm", "-rf", br])
 
     subprocess.run(["rm", "-rf", work])

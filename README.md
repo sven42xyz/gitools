@@ -162,7 +162,7 @@ table:
 ### Branch screen
 
 Move the cursor onto a repo and press **Enter** to open a full-screen view of
-its local branches. Stale branches are flagged:
+its local branches. Stale branches are flagged and can be deleted from the screen:
 
 ```text
 demo  ·  on feat/active  ·  default: main
@@ -175,7 +175,7 @@ demo  ·  on feat/active  ·  default: main
     main         origin/main         ≡     1 day ago    default
 
   5 branches · 3 stale (2 safe to delete)
-  ↑/↓ move · r reload · Esc back · q quit
+  ↑/↓ move · space mark · a mark safe · d delete · r reload · Esc back · q quit
 ```
 
 | State | Meaning |
@@ -194,6 +194,23 @@ demo  ·  on feat/active  ·  default: main
   in the default branch, even if their remote branch is gone.
 - The analysis runs when the screen opens (and on `r`). The table's
   auto-refresh is paused while the screen is open.
+
+| Key | Action |
+|-----|--------|
+| `space` | Mark / unmark the branch under the cursor for deletion (`✗`) |
+| `a` | Mark every branch that is safe to delete (press again to clear) |
+| `d` | Delete the marked branches, or the one under the cursor if none are marked |
+| `r` | Re-run the analysis |
+| `Esc` / `←` | Back to the table |
+
+Deleting always asks first. `y` confirms when every branch is `merged` or
+`squashed`. If any branch has unmerged work (`gone (unmerged)` or not stale at
+all), the prompt names it and only an uppercase **`Y`** confirms.
+
+Only **local** branches are deleted, and the remote is never touched. The
+checked-out branch, the default branch and protected branches can't be marked.
+If a branch got new commits after the analysis, it is skipped rather than
+deleted.
 
 ### Notes
 

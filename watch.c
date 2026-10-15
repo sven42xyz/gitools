@@ -286,15 +286,91 @@ static bool read_branch(char *out, size_t n) {
 }
 
 /* ── Repo branch screen ────────────────────────────────────────────────────── */
+/* Delete targets: the marked branches, or `only` (the cursor row) when >= 0. */
+static bool is_target(const bool *marked, int only, size_t i) {
+    return only >= 0 ? (size_t)only == i : marked[i];
+}
+
+/*
+ * Write the confirmation for deleting the targets into prompt. Returns true
+ * when it must be strict (uppercase Y) because unmerged work would be lost.
+ */
+static bool delete_prompt(const BranchList *bl, const bool *marked, int only,
+                          char *prompt, size_t n) {
+    size_t count = 0, n_unsafe = 0;
+    const char *unsafe_name = NULL;
+    for (size_t i = 0; i < bl->count; i++) {
+        if (!is_target(marked, only, i)) continue;
+        count++;
+        if (!branch_safe(&bl->branches[i]) && !n_unsafe++)
+            unsafe_name = bl->branches[i].name;
+    }
+    const char *plural = count == 1 ? "" : "es";
+    if (n_unsafe)
+        snprintf(prompt, n, "%sDelete %zu branch%s?%s %s%zu with unmerged work (%s%s) "
+                 "will be lost.%s Press %sY%s to confirm, any other key cancels.",
+                 C(COL_BOLD), count, plural, C(COL_RESET), C(COL_RED), n_unsafe,
+                 unsafe_name, n_unsafe > 1 ? ", \xe2\x80\xa6" : "", C(COL_RESET),
+                 C(COL_BOLD), C(COL_RESET));
+    else
+        snprintf(prompt, n, "%sDelete %zu branch%s?%s y/N",
+                 C(COL_BOLD), count, plural, C(COL_RESET));
+    return n_unsafe > 0;
+}
+
+/*
+ * Delete the targets and drop the deleted entries from bl/marked in place —
+ * deleting a branch changes no other branch's classification, so there is no
+ * need to re-run the (slow) analysis. Reports the outcome in note.
+ */
+static void delete_targets(const char *path, BranchList *bl, bool *marked, int only,
+                           char *note, size_t n) {
+    size_t ok = 0, changed = 0, failed = 0, locked = 0, keep = 0;
+    for (size_t i = 0; i < bl->count; i++) {
+        if (is_target(marked, only, i)) {
+            /* once a lock outlasted the wait, don't stall on every remaining branch */
+            DeleteResult r = locked ? DEL_LOCKED : repo_delete_branch(path, &bl->branches[i]);
+            if (r == DEL_OK) { ok++; continue; }
+            if      (r == DEL_CHANGED) changed++;
+            else if (r == DEL_LOCKED)  locked++;
+            else                       failed++;
+        }
+        bl->branches[keep] = bl->branches[i];
+        marked[keep++]     = false;    /* survivors start unmarked */
+    }
+    bl->count = keep;
+
+    int len = snprintf(note, n, "deleted %zu", ok);
+    if (changed && len < (int)n)
+        len += snprintf(note + len, n - (size_t)len,
+                        " \xc2\xb7 %zu skipped (changed since analysis \xe2\x80\x94 press r)",
+                        changed);
+    if (locked && len < (int)n)
+        len += snprintf(note + len, n - (size_t)len,
+                        " \xc2\xb7 %zu not deleted (repository locked by another git process)",
+                        locked);
+    if (failed && len < (int)n)
+        snprintf(note + len, n - (size_t)len, " \xc2\xb7 %zu failed", failed);
+}
+
 /*
  * Full-screen view of one repo's local branches (Enter on a repo row). Branch
  * detection runs once on open and on 'r' — it is too slow to repeat per tick
  * — and the watch rescan is paused while the screen is up, since this loop
- * blocks the main loop. Returns true when the user asked to quit gitls.
+ * blocks the main loop.
+ *
+ * space marks/unmarks a branch, 'a' marks every safe-to-delete one (or clears
+ * the marks), 'd' deletes the marked branches — or the one under the cursor
+ * when nothing is marked — after a confirmation shown in place of the key
+ * hints. Returns true when the user asked to quit gitls.
  */
 static bool run_repo_screen(const char *path) {
     BranchList bl = { 0 };
-    char note[128] = "";
+    bool *marked = NULL;
+    char note[256] = "";
+    char prompt[320] = "";        /* non-empty while a delete awaits confirmation */
+    bool strict = false;          /* the pending delete needs an uppercase Y */
+    int  only = -1;               /* pending delete of just this row (nothing marked) */
     int  cursor = 0, offset = 0;
     bool reload = true, quit = false;
 
@@ -309,10 +385,13 @@ static bool run_repo_screen(const char *path) {
             int rc = repo_branch_list(path, opt_protected_branches,
                                       opt_protected_branches_count, &bl);
             spinner_stop();
-            snprintf(note, sizeof(note), "%s", rc == 0 ? "" : "could not open repository");
-            if (bl.count == 0)                cursor = 0;
-            else if ((size_t)cursor >= bl.count) cursor = (int)bl.count - 1;
+            if (rc != 0) snprintf(note, sizeof(note), "could not open repository");
+            free(marked);
+            marked = calloc(bl.count ? bl.count : 1, sizeof(bool));
+            if (!marked) break;
         }
+        if (bl.count == 0)                   cursor = 0;
+        else if ((size_t)cursor >= bl.count) cursor = (int)bl.count - 1;
 
         int visible = branch_screen_rows();
         if (cursor < offset)            offset = cursor;
@@ -321,22 +400,71 @@ static bool run_repo_screen(const char *path) {
             offset = MAX(0, (int)bl.count - visible);
 
         printf(CURSOR_HOME);
-        print_branch_screen(path, &bl, cursor, offset, visible, note);
+        print_branch_screen(path, &bl, marked, cursor, offset, visible, note, prompt);
         printf(CLEAR_TO_END);
         fflush(stdout);
 
         Key  k  = K_NONE;
         char ch = 0;
         WatchEvent ev = wait_for_event(WAIT_FOREVER, &k, &ch);
-        if (ev == EV_STOP || (ev == EV_KEY && is_quit_key(k, ch))) { quit = true; break; }
-        if (ev != EV_KEY) continue;   /* resize — redraw */
+        if (ev == EV_STOP) { quit = true; break; }
+        if (ev != EV_KEY)  continue;   /* resize — redraw */
 
-        if (k == K_UP   && cursor > 0)                       cursor--;
-        if (k == K_DOWN && (size_t)cursor + 1 < bl.count)    cursor++;
-        if (k == K_ESC || k == K_LEFT)                       break;
-        if (k == K_CHAR && ch == 'r')                        reload = true;
+        if (prompt[0]) {               /* answering the confirmation */
+            prompt[0] = '\0';
+            if (k == K_CHAR && (ch == 'Y' || (!strict && ch == 'y')))
+                delete_targets(path, &bl, marked, only, note, sizeof(note));
+            else
+                snprintf(note, sizeof(note), "delete cancelled");
+            continue;
+        }
+
+        note[0] = '\0';                /* any other key dismisses the last note */
+        if (is_quit_key(k, ch))           { quit = true; break; }
+        if (k == K_ESC || k == K_LEFT)    break;
+        if (k == K_UP   && cursor > 0)                    cursor--;
+        if (k == K_DOWN && (size_t)cursor + 1 < bl.count) cursor++;
+        if (k != K_CHAR || bl.count == 0) continue;
+
+        const BranchInfo *cur = &bl.branches[cursor];
+        const char *exempt = branch_exempt_reason(cur);
+        switch (ch) {
+            case 'r':
+                reload = true;
+                break;
+            case ' ':
+                if (exempt) {
+                    snprintf(note, sizeof(note), "can't delete %s (%s)", cur->name, exempt);
+                    break;
+                }
+                marked[cursor] = !marked[cursor];
+                if ((size_t)cursor + 1 < bl.count) cursor++;   /* mark down the list */
+                break;
+            case 'a': {
+                /* mark every safe branch; if they already all are, clear instead */
+                bool all = true, any = false;
+                for (size_t i = 0; i < bl.count; i++)
+                    if (branch_safe(&bl.branches[i])) { any = true; all = all && marked[i]; }
+                if (!any) snprintf(note, sizeof(note), "no branches are safe to delete");
+                for (size_t i = 0; i < bl.count; i++)
+                    marked[i] = !all && (marked[i] || branch_safe(&bl.branches[i]));
+                break;
+            }
+            case 'd': {
+                bool any = false;
+                for (size_t i = 0; i < bl.count; i++) any = any || marked[i];
+                if (!any && exempt) {
+                    snprintf(note, sizeof(note), "can't delete %s (%s)", cur->name, exempt);
+                    break;
+                }
+                only   = any ? -1 : cursor;
+                strict = delete_prompt(&bl, marked, only, prompt, sizeof(prompt));
+                break;
+            }
+        }
     }
 
+    free(marked);
     branch_list_free(&bl);
     return quit;
 }

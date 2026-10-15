@@ -11,6 +11,13 @@ All notable changes to this project will be documented in this file.
   detection via patch-id) or `gone (unmerged)`. The auto-refresh pauses while
   the screen is open. `r` re-runs the analysis, and `Esc` or `←` returns to the
   table.
+- Branch screen: delete branches. `space` marks a branch, `a` marks every safe
+  (merged/squashed) one, and `d` deletes after an inline `y/N` confirmation.
+  Branches with unmerged work need an uppercase `Y`. Only local branches are
+  deleted. The checked-out, default and protected branches can't be marked,
+  and a branch that moved since the analysis is skipped.
+  While another git process (an IDE's background fetch, say) holds the ref
+  lock, the delete waits up to a second for it, as git itself does.
 - `~/.gitlsrc` key `protected_branches`: branches that are never flagged as
   stale.
 - The watch footer always shows `↑/↓ move · ⏎ branches`.
