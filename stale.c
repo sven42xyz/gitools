@@ -323,6 +323,7 @@ int repo_branch_list(const char *path, char **prot, size_t nprot, BranchList *ou
         b->is_default   = cls.have_default && strcmp(name, out->default_branch) == 0;
         b->is_protected = is_protected(name, prot, nprot);
         b->last_commit  = git_commit_time((git_commit *)tip_obj);
+        git_oid_cpy(&b->tip, tip);
         fill_upstream(b, repo, ref, tip);
 
         if (!branch_exempt_reason(b))
@@ -361,4 +362,34 @@ const char *branch_exempt_reason(const BranchInfo *b) {
 /* Safe to delete: the branch's work is already in the default branch. */
 bool branch_safe(const BranchInfo *b) {
     return b->reason == STR_MERGED || b->reason == STR_SQUASHED;
+}
+
+/* ── Deletion ──────────────────────────────────────────────────────────────── */
+/*
+ * Delete one local branch (never a remote one). Exempt branches are refused.
+ * The classification shown to the user was made for b->tip, so the delete is
+ * refused when the branch has moved since — new commits would otherwise be
+ * dropped unseen.
+ */
+DeleteResult repo_delete_branch(const char *path, const BranchInfo *b) {
+    if (branch_exempt_reason(b)) return DEL_REFUSED;
+
+    git_repository *repo = NULL;
+    if (git_repository_open(&repo, path) != 0) return DEL_ERROR;
+
+    DeleteResult res = DEL_ERROR;
+    git_reference *ref = NULL;
+    if (git_branch_lookup(&ref, repo, b->name, GIT_BRANCH_LOCAL) == 0) {
+        git_object *obj = NULL;
+        if (git_reference_peel(&obj, ref, GIT_OBJECT_COMMIT) == 0) {
+            if (git_oid_cmp(git_object_id(obj), &b->tip) != 0)
+                res = DEL_CHANGED;
+            else   /* libgit2 also refuses the checked-out branch itself */
+                res = git_branch_delete(ref) == 0 ? DEL_OK : DEL_ERROR;
+            git_object_free(obj);
+        }
+        git_reference_free(ref);
+    }
+    git_repository_free(repo);
+    return res;
 }

@@ -207,6 +207,15 @@ static void test_branch_list(void) {
     b = find_branch(&bl, "main");
     CHECK("default branch not stale", b && b->is_default && b->reason == STR_NONE);
 
+    /* deletion: refuses non-deletable branches and branches that moved */
+    BranchInfo moved = *find_branch(&bl, "lost");
+    memset(&moved.tip, 0, sizeof(moved.tip));            /* pretend it moved */
+    CHECK("delete refuses a branch that moved", repo_delete_branch(repo, &moved) == DEL_CHANGED);
+    CHECK("delete refuses HEAD", repo_delete_branch(repo, find_branch(&bl, "active")) == DEL_REFUSED);
+    CHECK("delete refuses protected", repo_delete_branch(repo, find_branch(&bl, "keep")) == DEL_REFUSED);
+    CHECK("delete removes merged branch", repo_delete_branch(repo, find_branch(&bl, "merged")) == DEL_OK);
+    CHECK("deleted branch is gone", repo_delete_branch(repo, find_branch(&bl, "merged")) == DEL_ERROR);
+
     branch_list_free(&bl);
     CHECK("missing repo → -1", repo_branch_list("/nonexistent/x", NULL, 0, &bl) == -1);
     git_libgit2_shutdown();

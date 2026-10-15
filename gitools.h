@@ -104,8 +104,16 @@ typedef struct {
     size_t      ahead;           /* vs upstream (0/0 when none or gone) */
     size_t      behind;
     git_time_t  last_commit;
+    git_oid     tip;             /* commit the classification was made for */
     StaleReason reason;
 } BranchInfo;
+
+typedef enum {
+    DEL_OK = 0,
+    DEL_CHANGED,    /* tip moved since the analysis — reload before deleting */
+    DEL_REFUSED,    /* checked-out, default or protected branch */
+    DEL_ERROR,
+} DeleteResult;
 
 typedef struct {
     char        default_branch[256];   /* "" = could not be determined */
@@ -205,7 +213,8 @@ void        print_grouped_table(const ColWidths *w, bool dirty_only,
                                 const VisRow *rows, size_t nrows, int cursor);
 int         branch_screen_rows(void);
 void        print_branch_screen(const char *repo_path, const BranchList *bl,
-                                int cursor, int offset, int visible, const char *note);
+                                const bool *marked, int cursor, int offset,
+                                int visible, const char *note, const char *prompt);
 void        print_switch_summary(const ColWidths *w);
 void        print_fetch_summary(const ColWidths *w);
 void        print_pull_summary(const ColWidths *w);
@@ -218,6 +227,7 @@ int         repo_branch_list(const char *path, char **protected_list, size_t npr
 void        branch_list_free(BranchList *bl);
 const char *branch_exempt_reason(const BranchInfo *b);
 bool        branch_safe(const BranchInfo *b);
+DeleteResult repo_delete_branch(const char *path, const BranchInfo *b);
 
 /* scan.c */
 void find_repos(const char *path, int depth);

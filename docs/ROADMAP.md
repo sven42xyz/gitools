@@ -33,7 +33,7 @@ branch lists fit).
   a stale marker (gone / merged / squashed). *Implemented.*
 - **v2 (delete):** mark branches (`space`, `a` = all safe), `d` deletes after
   an inline confirmation. Branches that are not safe to delete need an
-  explicit `Y`.
+  explicit `Y`. *Implemented.*
 - The detection core lives in `stale.c` (`repo_branch_list()`), with no
   global state. It is ported from PR #4. That PR's `stale` subcommand is
   deliberately not part of 0.6.0, and a CLI can be added later without breaking

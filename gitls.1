@@ -155,6 +155,21 @@ are never flagged. The auto\-refresh pauses while the screen is open;
 .B r
 re\-runs the analysis, Esc or Left returns to the table.
 .PP
+Branches can be deleted from the screen: Space marks the branch under the
+cursor,
+.B a
+marks every branch that is safe to delete (merged or squashed), and
+.B d
+deletes the marked branches (or the one under the cursor) after a
+confirmation.
+.B y
+confirms, unless a branch with unmerged work is included; then only an
+uppercase
+.B Y
+does. Only local branches are deleted. The checked\-out, default and
+protected branches cannot be marked, and a branch that gained commits since
+the analysis is skipped.
+.PP
 The automatic refresh and the
 .B r
 key re\-scan locally only; they do not fetch. The
