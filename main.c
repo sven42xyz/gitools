@@ -32,11 +32,6 @@ size_t opt_extra_skip_count   = 0;
 char **opt_protected_branches       = NULL;
 size_t opt_protected_branches_count = 0;
 
-static void free_list(char **list, size_t count) {
-    for (size_t i = 0; i < count; i++) free(list[i]);
-    free(list);
-}
-
 /* Release the list-valued options loaded from ~/.gitlsrc. */
 static void free_config_lists(void) {
     free_list(opt_extra_skip, opt_extra_skip_count);

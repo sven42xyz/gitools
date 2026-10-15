@@ -190,13 +190,13 @@ static void test_branch_list(void) {
 
     const BranchInfo *b;
     b = find_branch(&bl, "merged");
-    CHECK("merged → STR_MERGED, safe", b && b->reason == STR_MERGED && b->safe_delete);
+    CHECK("merged → STR_MERGED, safe", b && b->reason == STR_MERGED && branch_safe(b));
     b = find_branch(&bl, "squash");
     CHECK("squash + remote gone → STR_SQUASHED, safe",
-          b && b->reason == STR_SQUASHED && b->upstream_gone && b->safe_delete);
+          b && b->reason == STR_SQUASHED && b->upstream_gone && branch_safe(b));
     b = find_branch(&bl, "lost");
     CHECK("gone with own work → STR_GONE, not safe",
-          b && b->reason == STR_GONE && !b->safe_delete);
+          b && b->reason == STR_GONE && !branch_safe(b));
     b = find_branch(&bl, "active");
     CHECK("checked-out branch never stale", b && b->is_head && b->reason == STR_NONE);
     CHECK("active is 1 ahead of upstream", b && b->ahead == 1 && b->behind == 0);

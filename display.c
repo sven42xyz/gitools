@@ -15,29 +15,23 @@
 
 #include "gitools.h"
 
-/* Terminal width in columns, or 0 when unknown (e.g. output is piped — then
- * the table is printed at full width so scripts get complete data). */
-int term_width(void) {
+/* Terminal columns (rows = false) or rows (rows = true), or 0 when unknown
+ * (e.g. output is piped — then the table is printed at full width so scripts
+ * get complete data). */
+static int term_dim(bool rows) {
     if (!isatty(STDOUT_FILENO))
-        return 0;   /* piped output → full width so scripts get complete data */
+        return 0;
     struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
-        return ws.ws_col;
-    const char *cols = getenv("COLUMNS");
-    if (cols) { int v = atoi(cols); if (v > 0) return v; }
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        int v = rows ? ws.ws_row : ws.ws_col;
+        if (v > 0) return v;
+    }
+    const char *env = getenv(rows ? "LINES" : "COLUMNS");
+    if (env) { int v = atoi(env); if (v > 0) return v; }
     return 0;
 }
 
-/* Terminal height in rows, or 0 when unknown. */
-int term_height(void) {
-    if (!isatty(STDOUT_FILENO)) return 0;
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0)
-        return ws.ws_row;
-    const char *lines = getenv("LINES");
-    if (lines) { int v = atoi(lines); if (v > 0) return v; }
-    return 0;
-}
+int term_width(void) { return term_dim(false); }
 
 /* ── UTF-8 display width ───────────────────────────────────────────────────── */
 /*
@@ -243,22 +237,30 @@ void write_col(const char *s, int width) {
 }
 
 /* ── Sync string builder ────────────────────────────────────────────────────── */
+/* Ahead/behind glyphs shared by the repo table and the branch screen. */
+static void sync_glyphs(size_t ahead, size_t behind, char *buf, size_t n,
+                        const char **color_out) {
+    if (ahead && behind) {
+        *color_out = COL_MAGENTA;
+        snprintf(buf, n, "\xe2\x86\x91%zu\xe2\x86\x93%zu", ahead, behind);
+    } else if (ahead) {
+        *color_out = COL_GREEN;
+        snprintf(buf, n, "\xe2\x86\x91%zu", ahead);
+    } else if (behind) {
+        *color_out = COL_RED;
+        snprintf(buf, n, "\xe2\x86\x93%zu", behind);
+    } else {
+        *color_out = COL_DIM;
+        snprintf(buf, n, "\xe2\x89\xa1");
+    }
+}
+
 static void build_sync_str(const Repo *r, char *buf, size_t n, const char **color_out) {
     if (!r->has_remote) {
         *color_out = COL_DIM;
         snprintf(buf, n, "?");
-    } else if (r->ahead && r->behind) {
-        *color_out = COL_MAGENTA;
-        snprintf(buf, n, "\xe2\x86\x91%zu\xe2\x86\x93%zu", r->ahead, r->behind);
-    } else if (r->ahead) {
-        *color_out = COL_GREEN;
-        snprintf(buf, n, "\xe2\x86\x91%zu", r->ahead);
-    } else if (r->behind) {
-        *color_out = COL_RED;
-        snprintf(buf, n, "\xe2\x86\x93%zu", r->behind);
     } else {
-        *color_out = COL_DIM;
-        snprintf(buf, n, "\xe2\x89\xa1");
+        sync_glyphs(r->ahead, r->behind, buf, n, color_out);
     }
 }
 
@@ -631,44 +633,46 @@ static const char *branch_upstream_str(const BranchInfo *b, const char **color) 
 
 /* Sync cell vs upstream, same glyphs as the repo table; blank without one. */
 static void branch_sync_str(const BranchInfo *b, char *buf, size_t n, const char **color) {
-    buf[0] = '\0';
-    *color = COL_DIM;
-    if (!b->upstream[0] || b->upstream_gone) return;
-    if (b->ahead && b->behind) {
-        *color = COL_MAGENTA;
-        snprintf(buf, n, "\xe2\x86\x91%zu\xe2\x86\x93%zu", b->ahead, b->behind);
-    } else if (b->ahead) {
-        *color = COL_GREEN;
-        snprintf(buf, n, "\xe2\x86\x91%zu", b->ahead);
-    } else if (b->behind) {
-        *color = COL_RED;
-        snprintf(buf, n, "\xe2\x86\x93%zu", b->behind);
-    } else {
-        snprintf(buf, n, "\xe2\x89\xa1");
-    }
+    if (!b->upstream[0] || b->upstream_gone) { buf[0] = '\0'; *color = COL_DIM; return; }
+    sync_glyphs(b->ahead, b->behind, buf, n, color);
 }
 
-/* State cell: the stale reason, or why a branch is exempt from it. */
+/* State cell label and colour per stale reason. */
+static const struct { const char *label, *color; } STATE_CELL[] = {
+    [STR_NONE]     = { "",                COL_DIM   },
+    [STR_GONE]     = { "gone (unmerged)", COL_RED   },
+    [STR_MERGED]   = { "merged",          COL_GREEN },
+    [STR_SQUASHED] = { "squashed",        COL_GREEN },
+};
+
+/* State cell: the stale reason, or why a branch is exempt from it (the
+ * checked-out branch already carries the * marker, so it stays blank). */
 static const char *branch_state_str(const BranchInfo *b, const char **color) {
-    if (b->reason == STR_GONE)  { *color = COL_RED;   return "gone (unmerged)"; }
-    if (b->reason != STR_NONE)  { *color = COL_GREEN; return stale_reason_str(b->reason); }
-    *color = COL_DIM;
-    if (b->is_default)   return "default";
-    if (b->is_protected) return "protected";
-    return "";
+    const char *exempt = branch_exempt_reason(b);
+    if (exempt && !b->is_head) { *color = COL_DIM; return exempt; }
+    *color = STATE_CELL[b->reason].color;
+    return STATE_CELL[b->reason].label;
+}
+
+/* Lines print_branch_screen draws around the branch rows: name, path, blank
+ * and column header above; "(N more)", blank, summary, keys and note below. */
+#define BS_CHROME_ROWS 9
+
+/* Branch rows that fit on screen (20 when the height is unknown). */
+int branch_screen_rows(void) {
+    int th = term_dim(true);
+    return th > 0 ? MAX(3, th - BS_CHROME_ROWS) : 20;
 }
 
 void print_branch_screen(const char *repo_path, const BranchList *bl,
                          int cursor, int offset, int visible, const char *note) {
-    const char *name = strrchr(repo_path, '/');
-    name = name ? name + 1 : repo_path;
-
+    const char *name = path_basename(repo_path);
     const char *head = "";
     size_t n_stale = 0, n_safe = 0;
     for (size_t i = 0; i < bl->count; i++) {
         if (bl->branches[i].is_head) head = bl->branches[i].name;
         if (bl->branches[i].reason != STR_NONE) n_stale++;
-        if (bl->branches[i].safe_delete)        n_safe++;
+        if (branch_safe(&bl->branches[i]))     n_safe++;
     }
 
     int tw = term_width();

@@ -85,16 +85,24 @@ static Key read_key(char *ch);
 /* ── Input events ──────────────────────────────────────────────────────────── */
 typedef enum {
     EV_TIMEOUT,   /* interval elapsed — refresh */
-    EV_QUIT,      /* user asked to quit */
+    EV_STOP,      /* stop signal (SIGINT / SIGTERM) */
     EV_KEY,       /* a key was pressed (see *key_out / *ch_out) */
     EV_RESIZE,    /* terminal was resized — recompute widths and redraw */
 } WatchEvent;
 
+#define WAIT_FOREVER (-1)
+
+/* 'q' / 'Q' quit the view they are pressed in. */
+static bool is_quit_key(Key k, char ch) {
+    return k == K_CHAR && (ch == 'q' || ch == 'Q');
+}
+
 /*
- * Block up to timeout_ms milliseconds. Returns EV_TIMEOUT when it elapses,
- * EV_QUIT on 'q'/'Q'/Ctrl-C or a stop signal, EV_RESIZE on a terminal resize,
- * or EV_KEY with the decoded logical key in *key_out (and the byte in *ch_out
- * for K_CHAR).
+ * Block up to timeout_ms milliseconds (WAIT_FOREVER: no limit). Returns
+ * EV_TIMEOUT when it elapses, EV_STOP on a stop signal (incl. Ctrl-C),
+ * EV_RESIZE on a terminal resize, or EV_KEY with the decoded logical key in
+ * *key_out (and the byte in *ch_out for K_CHAR). What a key means — 'q'
+ * included — is up to the caller.
  */
 static WatchEvent wait_for_event(int timeout_ms, Key *key_out, char *ch_out) {
     struct timespec start;
@@ -102,15 +110,15 @@ static WatchEvent wait_for_event(int timeout_ms, Key *key_out, char *ch_out) {
     const long deadline_ms = timeout_ms;
 
     for (;;) {
-        if (g_watch_stop) return EV_QUIT;
+        if (g_watch_stop) return EV_STOP;
         if (g_winch) { g_winch = 0; return EV_RESIZE; }
 
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
         long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000
                         + (now.tv_nsec - start.tv_nsec) / 1000000;
-        long remaining = deadline_ms - elapsed_ms;
-        if (remaining <= 0) return EV_TIMEOUT;
+        long remaining = timeout_ms < 0 ? -1 : deadline_ms - elapsed_ms;
+        if (timeout_ms >= 0 && remaining <= 0) return EV_TIMEOUT;
 
         struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
         int rc = poll(&pfd, 1, (int)remaining);
@@ -124,7 +132,6 @@ static WatchEvent wait_for_event(int timeout_ms, Key *key_out, char *ch_out) {
             char c = 0;
             Key k = read_key(&c);
             if (k == K_NONE) continue;
-            if (k == K_CHAR && (c == 'q' || c == 'Q')) return EV_QUIT;
             *key_out = k;
             *ch_out  = c;
             return EV_KEY;
@@ -307,10 +314,7 @@ static bool run_repo_screen(const char *path) {
             else if ((size_t)cursor >= bl.count) cursor = (int)bl.count - 1;
         }
 
-        /* rows left for branches: header (4) + summary/footer/note (4) */
-        int th = term_height();
-        int visible = th > 0 ? th - 8 : 20;
-        if (visible < 3) visible = 3;
+        int visible = branch_screen_rows();
         if (cursor < offset)            offset = cursor;
         if (cursor >= offset + visible) offset = cursor - visible + 1;
         if (offset > 0 && (size_t)(offset + visible) > bl.count)
@@ -323,9 +327,9 @@ static bool run_repo_screen(const char *path) {
 
         Key  k  = K_NONE;
         char ch = 0;
-        WatchEvent ev = wait_for_event(60 * 60 * 1000, &k, &ch);
-        if (ev == EV_QUIT)   { quit = true; break; }
-        if (ev != EV_KEY)    continue;   /* timeout or resize — redraw */
+        WatchEvent ev = wait_for_event(WAIT_FOREVER, &k, &ch);
+        if (ev == EV_STOP || (ev == EV_KEY && is_quit_key(k, ch))) { quit = true; break; }
+        if (ev != EV_KEY) continue;   /* resize — redraw */
 
         if (k == K_UP   && cursor > 0)                       cursor--;
         if (k == K_DOWN && (size_t)cursor + 1 < bl.count)    cursor++;
@@ -767,7 +771,7 @@ void run_watch(const char *abs_dir) {
             Key  k  = K_NONE;
             char ch = 0;
             WatchEvent ev = wait_for_event((int)remaining, &k, &ch);
-            if (ev == EV_QUIT)    goto done;
+            if (ev == EV_STOP || (ev == EV_KEY && is_quit_key(k, ch))) goto done;
             if (ev == EV_TIMEOUT) { note[0] = '\0'; break; }
             if (ev == EV_RESIZE) {
                 /* resize the columns to the new terminal width without a rescan;

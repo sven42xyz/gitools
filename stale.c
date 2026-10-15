@@ -10,8 +10,8 @@
  *   STR_GONE     — the upstream tracking branch was deleted on the remote, but
  *                  the work is not (provably) in the default branch
  *
- * A branch is safe_delete when its work is already in the default branch
- * (merged or squashed). A GONE-only branch may carry local-only commits.
+ * A branch is safe to delete (branch_safe) when its work is already in the
+ * default branch (merged or squashed). A GONE-only branch may carry local-only commits.
  *
  * The API is free of the global Repo/opt_* state so it can back both the
  * watch-mode repo screen and, later, the --json output. It is computed lazily
@@ -48,6 +48,14 @@ static int commit_first_parent_patchid(git_repository *repo, const git_oid *comm
         return -1;
     }
 
+    /* a squash commit has a single parent; a merge's first-parent diff is the
+     * whole merged branch — the costliest diff and never a squash match */
+    if (git_commit_parentcount(commit) > 1) {
+        git_tree_free(new_tree);
+        git_commit_free(commit);
+        return -1;
+    }
+
     git_tree *old_tree = NULL;
     if (git_commit_parentcount(commit) > 0) {
         git_commit *parent = NULL;
@@ -70,13 +78,11 @@ static int commit_first_parent_patchid(git_repository *repo, const git_oid *comm
     return rc;
 }
 
+/* Patch-id of the branch's whole diff since its merge-base with default. */
 static int branch_cumulative_patchid(git_repository *repo, const git_oid *branch_tip,
-                                     const git_oid *default_tip, git_oid *out) {
-    git_oid mb;
-    if (git_merge_base(&mb, repo, branch_tip, default_tip) != 0) return -1;
-
+                                     const git_oid *mb, git_oid *out) {
     git_commit *mb_commit = NULL, *branch_commit = NULL;
-    if (git_commit_lookup(&mb_commit, repo, &mb) != 0) return -1;
+    if (git_commit_lookup(&mb_commit, repo, mb) != 0) return -1;
     if (git_commit_lookup(&branch_commit, repo, branch_tip) != 0) {
         git_commit_free(mb_commit);
         return -1;
@@ -214,33 +220,52 @@ static bool is_protected(const char *name, char **prot, size_t nprot) {
 /* Fill upstream name, gone flag and ahead/behind for one branch. */
 static void fill_upstream(BranchInfo *b, git_repository *repo,
                           git_reference *ref, const git_oid *tip) {
-    git_buf up = GIT_BUF_INIT;
-    if (git_branch_upstream_name(&up, repo, git_reference_name(ref)) != 0) {
-        git_buf_dispose(&up);
-        return;   /* no upstream configured */
-    }
+    char up[sizeof(b->upstream) + 16] = "";
+    UpstreamState st = upstream_ahead_behind(repo, git_reference_name(ref), tip,
+                                             up, sizeof(up), &b->ahead, &b->behind);
+    b->upstream_gone = (st == UP_GONE);
 
     /* show the short name: refs/remotes/origin/foo → origin/foo */
-    const char *shown = up.ptr;
+    const char *shown = up;
     if (strncmp(shown, "refs/remotes/", 13) == 0) shown += 13;
     snprintf(b->upstream, sizeof(b->upstream), "%s", shown);
+}
 
-    git_reference *up_ref = NULL;
-    if (git_reference_lookup(&up_ref, repo, up.ptr) != 0) {
-        b->upstream_gone = true;
-    } else {
-        git_object *up_obj = NULL;
-        if (git_reference_peel(&up_obj, up_ref, GIT_OBJECT_COMMIT) == 0) {
-            size_t a = 0, bh = 0;
-            if (git_graph_ahead_behind(&a, &bh, repo, tip, git_object_id(up_obj)) == 0) {
-                b->ahead  = a;
-                b->behind = bh;
-            }
-            git_object_free(up_obj);
+/* Per-repo state for classifying branches against the default branch. */
+typedef struct {
+    git_repository *repo;
+    bool            have_default;
+    git_oid         default_oid;
+    git_oid        *pids;          /* default-branch patch-ids, built on first need */
+    size_t          pid_count;
+    bool            pids_built;
+} Classifier;
+
+/*
+ * Stale reason of a deletable branch. One merge-base answers both questions:
+ * merge-base == tip means the tip is reachable from default (MERGED), else it
+ * is the base of the squash check. A tip equal to default is a fresh branch
+ * with no work yet — not stale. GONE only applies when the work is not
+ * already accounted for, so a squash-merged branch whose remote was deleted
+ * stays squashed (the UPSTREAM column still says gone).
+ */
+static StaleReason classify(Classifier *c, const BranchInfo *b, const git_oid *tip) {
+    git_oid mb;
+    if (c->have_default && git_oid_cmp(tip, &c->default_oid) != 0 &&
+        git_merge_base(&mb, c->repo, tip, &c->default_oid) == 0) {
+        if (git_oid_cmp(&mb, tip) == 0) return STR_MERGED;
+
+        if (!c->pids_built) {
+            build_default_patchids(c->repo, &c->default_oid, &c->pids, &c->pid_count);
+            c->pids_built = true;
         }
-        git_reference_free(up_ref);
+        git_oid bpid;
+        if (c->pid_count > 0 &&
+            branch_cumulative_patchid(c->repo, tip, &mb, &bpid) == 0 &&
+            patchid_in_set(&bpid, c->pids, c->pid_count))
+            return STR_SQUASHED;
     }
-    git_buf_dispose(&up);
+    return b->upstream_gone ? STR_GONE : STR_NONE;
 }
 
 /* HEAD first, then stale branches, then the rest — newest commit first. */
@@ -259,15 +284,10 @@ int repo_branch_list(const char *path, char **prot, size_t nprot, BranchList *ou
     git_repository *repo = NULL;
     if (git_repository_open(&repo, path) != 0) return -1;
 
-    git_oid default_oid;
-    bool have_default =
-        resolve_default(repo, out->default_branch, sizeof(out->default_branch),
-                        &default_oid) == 0;
-
-    /* patch-id cache of the default branch, built on first need */
-    git_oid *default_pids = NULL;
-    size_t   default_pid_count = 0;
-    bool     default_pids_built = false;
+    Classifier cls = { .repo = repo };
+    cls.have_default = resolve_default(repo, out->default_branch,
+                                       sizeof(out->default_branch),
+                                       &cls.default_oid) == 0;
 
     git_branch_iterator *it = NULL;
     if (git_branch_iterator_new(&it, repo, GIT_BRANCH_LOCAL) != 0) {
@@ -300,48 +320,19 @@ int repo_branch_list(const char *path, char **prot, size_t nprot, BranchList *ou
         const git_oid *tip = git_object_id(tip_obj);
         snprintf(b->name, sizeof(b->name), "%s", name);
         b->is_head      = git_branch_is_head(ref) == 1;
-        b->is_default   = have_default && strcmp(name, out->default_branch) == 0;
+        b->is_default   = cls.have_default && strcmp(name, out->default_branch) == 0;
         b->is_protected = is_protected(name, prot, nprot);
         b->last_commit  = git_commit_time((git_commit *)tip_obj);
         fill_upstream(b, repo, ref, tip);
 
-        /* the checked-out, default and protected branches are never stale */
-        if (!b->is_head && !b->is_default && !b->is_protected) {
-            /* MERGED: tip reachable from default. A tip equal to default is a
-             * fresh branch with no work yet — not stale. */
-            if (have_default && git_oid_cmp(tip, &default_oid) != 0 &&
-                git_graph_descendant_of(repo, &default_oid, tip) == 1)
-                b->reason = STR_MERGED;
-
-            /* SQUASHED: cumulative branch diff matches a default commit */
-            if (b->reason == STR_NONE && have_default &&
-                git_oid_cmp(tip, &default_oid) != 0) {
-                if (!default_pids_built) {
-                    build_default_patchids(repo, &default_oid,
-                                           &default_pids, &default_pid_count);
-                    default_pids_built = true;
-                }
-                git_oid bpid;
-                if (default_pid_count > 0 &&
-                    branch_cumulative_patchid(repo, tip, &default_oid, &bpid) == 0 &&
-                    patchid_in_set(&bpid, default_pids, default_pid_count))
-                    b->reason = STR_SQUASHED;
-            }
-
-            b->safe_delete = (b->reason == STR_MERGED || b->reason == STR_SQUASHED);
-
-            /* GONE only when the work is not already accounted for above — a
-             * squash-merged branch whose remote was deleted shows as squashed
-             * (the UPSTREAM column still says gone) and stays safe to delete */
-            if (b->reason == STR_NONE && b->upstream_gone)
-                b->reason = STR_GONE;
-        }
+        if (!branch_exempt_reason(b))
+            b->reason = classify(&cls, b, tip);
 
         git_object_free(tip_obj);
         git_reference_free(ref);
     }
 
-    free(default_pids);
+    free(cls.pids);
     git_branch_iterator_free(it);
     git_repository_free(repo);
 
@@ -356,11 +347,18 @@ void branch_list_free(BranchList *bl) {
     bl->count = 0;
 }
 
-const char *stale_reason_str(StaleReason r) {
-    switch (r) {
-        case STR_GONE:     return "gone";
-        case STR_MERGED:   return "merged";
-        case STR_SQUASHED: return "squashed";
-        default:           return "";
-    }
+/*
+ * Why a branch is exempt from stale detection (and deletion): "checked out",
+ * "default" or "protected" — NULL when it is not exempt.
+ */
+const char *branch_exempt_reason(const BranchInfo *b) {
+    if (b->is_head)      return "checked out";
+    if (b->is_default)   return "default";
+    if (b->is_protected) return "protected";
+    return NULL;
+}
+
+/* Safe to delete: the branch's work is already in the default branch. */
+bool branch_safe(const BranchInfo *b) {
+    return b->reason == STR_MERGED || b->reason == STR_SQUASHED;
 }

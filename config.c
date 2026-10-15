@@ -24,6 +24,11 @@
 
 #define MAX_LIST_ITEMS 64
 
+void free_list(char **list, size_t count) {
+    for (size_t i = 0; i < count; i++) free(list[i]);
+    free(list);
+}
+
 /*
  * Split a comma-separated value into a newly allocated list (capped to avoid
  * memory exhaustion), trimming surrounding blanks so "a, b" stores "b" rather
@@ -51,8 +56,7 @@ static void set_list(const char *val, char ***arr, size_t *count) {
 
         char *dup = strdup(tok);
         if (!dup) {
-            for (size_t i = 0; i < n; i++) free(list[i]);
-            free(list);
+            free_list(list, n);
             free(copy);
             return;
         }
@@ -60,8 +64,7 @@ static void set_list(const char *val, char ***arr, size_t *count) {
     }
     free(copy);
 
-    for (size_t i = 0; i < *count; i++) free((*arr)[i]);
-    free(*arr);
+    free_list(*arr, *count);
     *arr   = list;
     *count = n;
 }

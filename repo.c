@@ -297,6 +297,42 @@ static void fill_status(Repo *r, git_repository *repo) {
 }
 
 /* ── Ahead / behind ────────────────────────────────────────────────────────── */
+/*
+ * Upstream of the local branch `refname` and how far `tip` is ahead/behind it.
+ * up_name (may be NULL) receives the upstream ref name, e.g.
+ * "refs/remotes/origin/foo", whenever one is configured. Returns UP_GONE when
+ * the upstream is configured but its remote-tracking ref no longer exists
+ * (deleted on the remote and pruned).
+ */
+UpstreamState upstream_ahead_behind(git_repository *repo, const char *refname,
+                                    const git_oid *tip, char *up_name, size_t n,
+                                    size_t *ahead, size_t *behind) {
+    *ahead = *behind = 0;
+    git_buf name = GIT_BUF_INIT;
+    if (git_branch_upstream_name(&name, repo, refname) != 0) {
+        git_buf_dispose(&name);
+        return UP_NONE;
+    }
+
+    UpstreamState st = UP_NONE;
+    git_reference *up_ref = NULL;
+    if (git_reference_lookup(&up_ref, repo, name.ptr) != 0) {
+        st = UP_GONE;
+    } else {
+        git_object *up_obj = NULL;
+        if (git_reference_peel(&up_obj, up_ref, GIT_OBJECT_COMMIT) == 0) {
+            if (git_graph_ahead_behind(ahead, behind, repo, tip, git_object_id(up_obj)) == 0)
+                st = UP_OK;
+            git_object_free(up_obj);
+        }
+        git_reference_free(up_ref);
+    }
+
+    if (up_name) snprintf(up_name, n, "%s", name.ptr);
+    git_buf_dispose(&name);
+    return st;
+}
+
 static void fill_ahead_behind(Repo *r, git_repository *repo) {
     r->ahead = r->behind = 0;
     r->has_remote = 0;
@@ -305,40 +341,12 @@ static void fill_ahead_behind(Repo *r, git_repository *repo) {
     if (git_repository_head(&head, repo) != 0) return;
 
     git_object *local_obj = NULL;
-    if (git_reference_peel(&local_obj, head, GIT_OBJECT_COMMIT) != 0) {
-        git_reference_free(head);
-        return;
-    }
-
-    git_buf upstream_name = GIT_BUF_INIT;
-    if (git_branch_upstream_name(&upstream_name, repo, git_reference_name(head)) != 0) {
-        git_buf_dispose(&upstream_name);
+    if (git_reference_peel(&local_obj, head, GIT_OBJECT_COMMIT) == 0) {
+        r->has_remote = upstream_ahead_behind(repo, git_reference_name(head),
+                                              git_object_id(local_obj), NULL, 0,
+                                              &r->ahead, &r->behind) == UP_OK;
         git_object_free(local_obj);
-        git_reference_free(head);
-        return;
     }
-
-    git_reference *upstream_ref = NULL;
-    if (git_reference_lookup(&upstream_ref, repo, upstream_name.ptr) != 0) {
-        git_buf_dispose(&upstream_name);
-        git_object_free(local_obj);
-        git_reference_free(head);
-        return;
-    }
-
-    git_object *upstream_obj = NULL;
-    if (git_reference_peel(&upstream_obj, upstream_ref, GIT_OBJECT_COMMIT) == 0) {
-        if (git_graph_ahead_behind(&r->ahead, &r->behind, repo,
-                                   git_object_id(local_obj),
-                                   git_object_id(upstream_obj)) == 0) {
-            r->has_remote = 1;
-        }
-        git_object_free(upstream_obj);
-    }
-
-    git_reference_free(upstream_ref);
-    git_buf_dispose(&upstream_name);
-    git_object_free(local_obj);
     git_reference_free(head);
 }
 

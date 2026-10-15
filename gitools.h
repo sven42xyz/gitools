@@ -62,6 +62,13 @@ typedef enum {
     PR_ERROR,
 } PullResult;
 
+/* ── Upstream state (repo.c upstream_ahead_behind) ─────────────────────────── */
+typedef enum {
+    UP_NONE = 0,    /* no upstream configured */
+    UP_GONE,        /* configured, but the remote-tracking ref no longer exists */
+    UP_OK,
+} UpstreamState;
+
 /* ── Repo ──────────────────────────────────────────────────────────────────── */
 typedef struct {
     char         path[PATH_MAX];
@@ -98,7 +105,6 @@ typedef struct {
     size_t      behind;
     git_time_t  last_commit;
     StaleReason reason;
-    bool        safe_delete;     /* work already in default (merged/squashed) */
 } BranchInfo;
 
 typedef struct {
@@ -163,8 +169,12 @@ extern size_t g_recent_branch_count;
 
 /* config.c */
 void load_config(void);
+void free_list(char **list, size_t count);
 
 /* repo.c */
+UpstreamState upstream_ahead_behind(git_repository *repo, const char *refname,
+                                    const git_oid *tip, char *up_name, size_t n,
+                                    size_t *ahead, size_t *behind);
 void resolve_git_path(void);
 int  git_available(void);
 void collect_path(const char *path);
@@ -179,7 +189,6 @@ void free_recent_branches(void);
 const char *C(const char *color);
 const char *EOL(void);
 int         term_width(void);
-int         term_height(void);
 const char *ellipsize(const char *s, int max_w);
 int         utf8_width(const char *s);
 const char *relative_time(git_time_t t);
@@ -194,6 +203,7 @@ void        print_status_table(const ColWidths *w, bool dirty_only);
 void        print_grouped_table(const ColWidths *w, bool dirty_only,
                                 const Group *groups, size_t ngroups,
                                 const VisRow *rows, size_t nrows, int cursor);
+int         branch_screen_rows(void);
 void        print_branch_screen(const char *repo_path, const BranchList *bl,
                                 int cursor, int offset, int visible, const char *note);
 void        print_switch_summary(const ColWidths *w);
@@ -206,7 +216,8 @@ void        spinner_stop(void);
 int         repo_branch_list(const char *path, char **protected_list, size_t nprot,
                              BranchList *out);
 void        branch_list_free(BranchList *bl);
-const char *stale_reason_str(StaleReason r);
+const char *branch_exempt_reason(const BranchInfo *b);
+bool        branch_safe(const BranchInfo *b);
 
 /* scan.c */
 void find_repos(const char *path, int depth);
