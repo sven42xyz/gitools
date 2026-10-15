@@ -29,6 +29,19 @@ bool   opt_categories         = true;   /* group repos by folder in watch mode *
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip         = NULL;
 size_t opt_extra_skip_count   = 0;
+char **opt_protected_branches       = NULL;
+size_t opt_protected_branches_count = 0;
+
+static void free_list(char **list, size_t count) {
+    for (size_t i = 0; i < count; i++) free(list[i]);
+    free(list);
+}
+
+/* Release the list-valued options loaded from ~/.gitlsrc. */
+static void free_config_lists(void) {
+    free_list(opt_extra_skip, opt_extra_skip_count);
+    free_list(opt_protected_branches, opt_protected_branches_count);
+}
 
 /* ── Git availability check ────────────────────────────────────────────────── */
 static int git_installed(void) {
@@ -227,11 +240,7 @@ int main(int argc, char **argv) {
         if (git_installed())
             resolve_git_path();
         run_watch(abs_dir);
-        if (opt_extra_skip) {
-            for (size_t i = 0; i < opt_extra_skip_count; i++)
-                free(opt_extra_skip[i]);
-            free(opt_extra_skip);
-        }
+        free_config_lists();
         git_libgit2_shutdown();
         return 0;
     }
@@ -268,11 +277,7 @@ int main(int argc, char **argv) {
         free(g_paths[i]);
     free(g_paths);
     free(g_repos);
-    if (opt_extra_skip) {
-        for (size_t i = 0; i < opt_extra_skip_count; i++)
-            free(opt_extra_skip[i]);
-        free(opt_extra_skip);
-    }
+    free_config_lists();
     git_libgit2_shutdown();
     return 0;
 }

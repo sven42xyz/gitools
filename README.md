@@ -125,6 +125,8 @@ notes the last action performed.
 | `f` | Fetch all repos from `origin` |
 | `p` | Fast-forward pull all clean repos |
 | `s` | Open the branch picker, then switch all clean repos to the chosen branch |
+| `↑` / `↓` | Move the cursor |
+| `Enter` | On a repo: open its [branch screen](#branch-screen). On a category: expand/collapse |
 | `r` | Refresh now (don't wait for the interval) |
 | `q` / Ctrl-C | Quit |
 
@@ -156,6 +158,42 @@ table:
 - **Tab** or **Enter** choose the highlighted branch (Enter also accepts a typed
   name that matches nothing, e.g. to create a new local tracking branch).
 - **Backspace** edits, **Esc** / Ctrl-C cancels.
+
+### Branch screen
+
+Move the cursor onto a repo and press **Enter** to open a full-screen view of
+its local branches. Stale branches are flagged:
+
+```text
+demo  ·  on feat/active  ·  default: main
+
+    BRANCH       UPSTREAM            SYNC  LAST COMMIT  STATE
+▸ * feat/active  origin/feat/active  ↑1    2 hours ago
+    feat/lost    gone                      3 days ago   gone (unmerged)
+    feat/merged  origin/feat/merged  ≡     5 days ago   merged
+    feat/squash  gone                      1 day ago    squashed
+    main         origin/main         ≡     1 day ago    default
+
+  5 branches · 3 stale (2 safe to delete)
+  ↑/↓ move · r reload · Esc back · q quit
+```
+
+| State | Meaning |
+|-------|---------|
+| `merged` | The branch tip is reachable from the default branch |
+| `squashed` | The branch's changes match a single commit on the default branch (squash merge) |
+| `gone (unmerged)` | The upstream was deleted on the remote, but the branch has work that is not in the default branch |
+
+- The default branch is the one `origin/HEAD` points to, or else a local
+  `main` / `master`.
+- The checked-out branch, the default branch, `main` / `master` and any branch
+  listed in [`protected_branches`](#configuration) are never flagged.
+- A branch still pointing at the default branch's tip (no work yet) is not
+  flagged.
+- `merged` and `squashed` branches are safe to delete. Their work is already
+  in the default branch, even if their remote branch is gone.
+- The analysis runs when the screen opens (and on `r`). The table's
+  auto-refresh is paused while the screen is open.
 
 ### Notes
 
@@ -338,6 +376,7 @@ Or create `~/.gitlsrc` manually:
 default_dir=~/projects
 max_depth=3
 skip_dirs=build,dist,tmp,*.egg-info
+protected_branches=develop,staging
 watch_interval=5
 dirty_only=false
 categories=true
@@ -349,6 +388,7 @@ no_color=false
 | `default_dir` | Directory to scan when none is given on the CLI | `.` (current dir) |
 | `max_depth` | Maximum directory recursion depth | `5` |
 | `skip_dirs` | Comma-separated directory names to skip (glob patterns supported) | — |
+| `protected_branches` | Comma-separated branches the [branch screen](#branch-screen) never flags as stale (`main` / `master` and the default branch always are protected) | — |
 | `watch_interval` | Default refresh interval (seconds) for `-w` | `3` |
 | `dirty_only` | `true`/`1` to filter to dirty repos by default (override per-run with `--no-dirty`) | `false` |
 | `categories` | `false`/`0` to disable folder grouping in watch mode (`-w`); shows one flat, alphabetical list | `true` |

@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include "../gitools.h"
 
@@ -25,6 +27,8 @@ bool   opt_dirty_only            = false;
 char   opt_default_dir[PATH_MAX] = "";
 char **opt_extra_skip            = NULL;
 size_t opt_extra_skip_count      = 0;
+char **opt_protected_branches    = NULL;
+size_t opt_protected_branches_count = 0;
 
 static int passed = 0, failed = 0;
 
@@ -133,11 +137,90 @@ static void test_repo_category(void) {
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────── */
+/* ── repo_branch_list ──────────────────────────────────────────────────────── */
+static const BranchInfo *find_branch(const BranchList *bl, const char *name) {
+    for (size_t i = 0; i < bl->count; i++)
+        if (strcmp(bl->branches[i].name, name) == 0) return &bl->branches[i];
+    return NULL;
+}
+
+/*
+ * Fixture: a clone of a bare origin with one branch per classification —
+ * merged, squash-merged (remote deleted), gone with unmerged work, an active
+ * branch ahead of its upstream (checked out), a fresh branch at main, and a
+ * protected one.
+ */
+static const char *FIXTURE =
+    "set -e; cd \"$0\"; "
+    "export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t; "
+    "git init -q --bare -b main origin.git; "
+    "git clone -q origin.git demo 2>/dev/null; cd demo; git checkout -q -b main; "
+    "echo a > a; git add a; git commit -qm init; git push -q -u origin main; "
+    "git remote set-head origin main; "
+    "git checkout -q -b merged; echo m > m; git add m; git commit -qm m; git push -q -u origin merged; "
+    "git checkout -q main; git merge -q --no-ff merged -m merge; git push -q; "
+    "git checkout -q -b squash; echo 1 > s; git add s; git commit -qm s1; "
+    "echo 2 >> s; git commit -qam s2; git push -q -u origin squash; "
+    "git checkout -q main; git merge -q --squash squash >/dev/null; git commit -qm squash; git push -q; "
+    "git push -q origin --delete squash; "
+    "git checkout -q -b lost; echo l > l; git add l; git commit -qm l; git push -q -u origin lost; "
+    "git push -q origin --delete lost; "
+    "git checkout -q main; git branch fresh; git branch keep merged; "
+    "git checkout -q -b active; git push -q -u origin active 2>/dev/null; "
+    "echo x > x; git add x; git commit -qm x";
+
+static void test_branch_list(void) {
+    printf("repo_branch_list\n");
+
+    char dir[] = "/tmp/gitls-unit-XXXXXX";
+    if (!mkdtemp(dir)) { CHECK("mkdtemp", 0); return; }
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "sh -c '%s' '%s' >/dev/null 2>&1", FIXTURE, dir);
+    if (system(cmd) != 0) { CHECK("fixture created", 0); return; }
+
+    char repo[PATH_MAX];
+    snprintf(repo, sizeof(repo), "%s/demo", dir);
+    char *prot[] = { "keep" };
+    BranchList bl;
+    git_libgit2_init();
+    CHECK("opens repo", repo_branch_list(repo, prot, 1, &bl) == 0);
+    CHECK("default resolved from origin/HEAD", strcmp(bl.default_branch, "main") == 0);
+    CHECK("lists all 7 branches", bl.count == 7);
+    CHECK("HEAD sorted first", bl.count > 0 && bl.branches[0].is_head);
+
+    const BranchInfo *b;
+    b = find_branch(&bl, "merged");
+    CHECK("merged → STR_MERGED, safe", b && b->reason == STR_MERGED && b->safe_delete);
+    b = find_branch(&bl, "squash");
+    CHECK("squash + remote gone → STR_SQUASHED, safe",
+          b && b->reason == STR_SQUASHED && b->upstream_gone && b->safe_delete);
+    b = find_branch(&bl, "lost");
+    CHECK("gone with own work → STR_GONE, not safe",
+          b && b->reason == STR_GONE && !b->safe_delete);
+    b = find_branch(&bl, "active");
+    CHECK("checked-out branch never stale", b && b->is_head && b->reason == STR_NONE);
+    CHECK("active is 1 ahead of upstream", b && b->ahead == 1 && b->behind == 0);
+    b = find_branch(&bl, "fresh");
+    CHECK("branch at default tip not stale", b && b->reason == STR_NONE);
+    b = find_branch(&bl, "keep");
+    CHECK("protected branch not stale", b && b->is_protected && b->reason == STR_NONE);
+    b = find_branch(&bl, "main");
+    CHECK("default branch not stale", b && b->is_default && b->reason == STR_NONE);
+
+    branch_list_free(&bl);
+    CHECK("missing repo → -1", repo_branch_list("/nonexistent/x", NULL, 0, &bl) == -1);
+    git_libgit2_shutdown();
+
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
+    if (system(cmd) != 0) { /* best-effort cleanup */ }
+}
+
 int main(void) {
     test_utf8_width();
     test_relative_time();
     test_ellipsize();
     test_repo_category();
+    test_branch_list();
 
     printf("\n%d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;

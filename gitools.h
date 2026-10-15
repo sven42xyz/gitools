@@ -79,6 +79,34 @@ typedef struct {
     char         net_error[256];   /* libgit2 error message on fetch/pull failure */
 } Repo;
 
+/* ── Branch list / stale detection (stale.c) ───────────────────────────────── */
+typedef enum {
+    STR_NONE = 0,   /* not stale */
+    STR_GONE,       /* upstream deleted on the remote; work not provably merged */
+    STR_MERGED,     /* tip reachable from the default branch */
+    STR_SQUASHED,   /* cumulative diff matches a default-branch commit */
+} StaleReason;
+
+typedef struct {
+    char        name[256];
+    char        upstream[256];   /* short upstream name, "" = none configured */
+    bool        upstream_gone;
+    bool        is_head;
+    bool        is_default;
+    bool        is_protected;    /* main/master or protected_branches */
+    size_t      ahead;           /* vs upstream (0/0 when none or gone) */
+    size_t      behind;
+    git_time_t  last_commit;
+    StaleReason reason;
+    bool        safe_delete;     /* work already in default (merged/squashed) */
+} BranchInfo;
+
+typedef struct {
+    char        default_branch[256];   /* "" = could not be determined */
+    BranchInfo *branches;
+    size_t      count;
+} BranchList;
+
 /* ── Watch-mode grouping ───────────────────────────────────────────────────── */
 /*
  * Repos are bucketed by their category (breadcrumb relative to the scan root,
@@ -120,6 +148,8 @@ extern bool   opt_categories;
 extern char   opt_default_dir[PATH_MAX];
 extern char **opt_extra_skip;
 extern size_t opt_extra_skip_count;
+extern char **opt_protected_branches;
+extern size_t opt_protected_branches_count;
 
 /* ── Repo collection (defined in repo.c) ──────────────────────────────────── */
 extern Repo  *g_repos;
@@ -149,6 +179,7 @@ void free_recent_branches(void);
 const char *C(const char *color);
 const char *EOL(void);
 int         term_width(void);
+int         term_height(void);
 const char *ellipsize(const char *s, int max_w);
 int         utf8_width(const char *s);
 const char *relative_time(git_time_t t);
@@ -163,11 +194,19 @@ void        print_status_table(const ColWidths *w, bool dirty_only);
 void        print_grouped_table(const ColWidths *w, bool dirty_only,
                                 const Group *groups, size_t ngroups,
                                 const VisRow *rows, size_t nrows, int cursor);
+void        print_branch_screen(const char *repo_path, const BranchList *bl,
+                                int cursor, int offset, int visible, const char *note);
 void        print_switch_summary(const ColWidths *w);
 void        print_fetch_summary(const ColWidths *w);
 void        print_pull_summary(const ColWidths *w);
 void        spinner_start(const char *msg);
 void        spinner_stop(void);
+
+/* stale.c */
+int         repo_branch_list(const char *path, char **protected_list, size_t nprot,
+                             BranchList *out);
+void        branch_list_free(BranchList *bl);
+const char *stale_reason_str(StaleReason r);
 
 /* scan.c */
 void find_repos(const char *path, int depth);

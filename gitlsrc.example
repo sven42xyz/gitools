@@ -14,6 +14,10 @@
 # Glob patterns are supported: *, ?, [abc]
 # skip_dirs=build,dist,tmp,node_modules,*.egg-info
 
+# Branches the watch-mode repo screen (Enter on a repo) must never flag as
+# stale. main, master and the repo's default branch are always protected.
+# protected_branches=develop,staging,release
+
 # Default refresh interval (in seconds) for watch mode (-w). Default: 3
 # watch_interval=5
 

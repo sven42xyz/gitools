@@ -2,7 +2,7 @@ CC      = cc
 TARGET  = gitls
 PREFIX  = /usr/local
 VERSION := $(shell (git describe --tags --always --dirty 2>/dev/null || echo "0.5.1") | sed 's/^v//')
-SRCS    = main.c repo.c display.c scan.c config.c watch.c
+SRCS    = main.c repo.c display.c scan.c config.c watch.c stale.c
 OBJS    = $(SRCS:.c=.o)
 DEPS    = $(OBJS:.o=.d)
 
@@ -50,7 +50,7 @@ $(TARGET): $(OBJS)
 
 main.o: .version
 
-TEST_OBJS = repo.o display.o scan.o
+TEST_OBJS = repo.o display.o scan.o stale.o
 
 test: $(TARGET) tests/unit
 	@printf "=== Unit tests ===\n"

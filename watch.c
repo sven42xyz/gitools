@@ -77,7 +77,7 @@ static void enter_raw_mode(void) {
 
 /* ── Logical keys ──────────────────────────────────────────────────────────── */
 typedef enum {
-    K_NONE, K_CHAR, K_ENTER, K_ESC, K_TAB, K_BACKSPACE, K_UP, K_DOWN, K_EOF
+    K_NONE, K_CHAR, K_ENTER, K_ESC, K_TAB, K_BACKSPACE, K_UP, K_DOWN, K_LEFT, K_EOF
 } Key;
 
 static Key read_key(char *ch);
@@ -153,6 +153,7 @@ static Key read_key(char *ch) {
                 if (read(STDIN_FILENO, &b2, 1) > 0) {
                     if (b2 == 'A') return K_UP;
                     if (b2 == 'B') return K_DOWN;
+                    if (b2 == 'D') return K_LEFT;
                 }
                 return K_NONE;   /* some other CSI sequence — ignore */
             }
@@ -277,6 +278,65 @@ static bool read_branch(char *out, size_t n) {
     }
 }
 
+/* ── Repo branch screen ────────────────────────────────────────────────────── */
+/*
+ * Full-screen view of one repo's local branches (Enter on a repo row). Branch
+ * detection runs once on open and on 'r' — it is too slow to repeat per tick
+ * — and the watch rescan is paused while the screen is up, since this loop
+ * blocks the main loop. Returns true when the user asked to quit gitls.
+ */
+static bool run_repo_screen(const char *path) {
+    BranchList bl = { 0 };
+    char note[128] = "";
+    int  cursor = 0, offset = 0;
+    bool reload = true, quit = false;
+
+    for (;;) {
+        if (reload) {
+            reload = false;
+            branch_list_free(&bl);
+            printf(CURSOR_HOME CLEAR_TO_END "  %sLoading branches…%s",
+                   C(COL_DIM), C(COL_RESET));   /* no-color fallback */
+            fflush(stdout);
+            spinner_start("Analyzing branches");
+            int rc = repo_branch_list(path, opt_protected_branches,
+                                      opt_protected_branches_count, &bl);
+            spinner_stop();
+            snprintf(note, sizeof(note), "%s", rc == 0 ? "" : "could not open repository");
+            if (bl.count == 0)                cursor = 0;
+            else if ((size_t)cursor >= bl.count) cursor = (int)bl.count - 1;
+        }
+
+        /* rows left for branches: header (4) + summary/footer/note (4) */
+        int th = term_height();
+        int visible = th > 0 ? th - 8 : 20;
+        if (visible < 3) visible = 3;
+        if (cursor < offset)            offset = cursor;
+        if (cursor >= offset + visible) offset = cursor - visible + 1;
+        if (offset > 0 && (size_t)(offset + visible) > bl.count)
+            offset = MAX(0, (int)bl.count - visible);
+
+        printf(CURSOR_HOME);
+        print_branch_screen(path, &bl, cursor, offset, visible, note);
+        printf(CLEAR_TO_END);
+        fflush(stdout);
+
+        Key  k  = K_NONE;
+        char ch = 0;
+        WatchEvent ev = wait_for_event(60 * 60 * 1000, &k, &ch);
+        if (ev == EV_QUIT)   { quit = true; break; }
+        if (ev != EV_KEY)    continue;   /* timeout or resize — redraw */
+
+        if (k == K_UP   && cursor > 0)                       cursor--;
+        if (k == K_DOWN && (size_t)cursor + 1 < bl.count)    cursor++;
+        if (k == K_ESC || k == K_LEFT)                       break;
+        if (k == K_CHAR && ch == 'r')                        reload = true;
+    }
+
+    branch_list_free(&bl);
+    return quit;
+}
+
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
 /*
  * has_git is false when no git binary was found: fetch/pull go through a git
@@ -288,11 +348,10 @@ static void print_footer(int interval_sec, const char *note,
                          bool has_categories, bool has_git) {
     printf("%s\n", EOL());   /* blank separator line (cleared) */
 
-    /* navigation keys only make sense when there are collapsible categories */
-    printf("  ");
-    if (has_categories)
-        printf("%s\xe2\x86\x91/\xe2\x86\x93%s move · %s\xe2\x8f\x8e%s expand · ",
-               C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET));
+    /* ⏎ opens a repo's branch screen, and also toggles category headers */
+    printf("  %s\xe2\x86\x91/\xe2\x86\x93%s move · %s\xe2\x8f\x8e%s %s · ",
+           C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
+           has_categories ? "expand/branches" : "branches");
     if (has_git)
         printf("%sf%s fetch · %sp%s pull · ",
                C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET));
@@ -732,6 +791,16 @@ void run_watch(const char *abs_dir) {
                     keyset_toggle(&expanded, g_groups[g_rows[cursor].group_idx].key);
                     /* re-apply expand state in place — no rescan needed */
                     build_groups(abs_dir, opt_dirty_only, &expanded);
+                    continue;
+                }
+                if (cursor >= 0 && g_rows[cursor].kind == ROW_REPO) {
+                    /* the screen blocks this loop, pausing the refresh; rescan
+                     * on return so the table reflects anything that changed */
+                    char path[PATH_MAX];
+                    snprintf(path, sizeof(path), "%s", g_repos[g_rows[cursor].repo_idx].path);
+                    if (run_repo_screen(path)) goto done;
+                    note[0] = '\0';
+                    break;
                 }
                 continue;
             }

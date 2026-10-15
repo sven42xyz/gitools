@@ -28,6 +28,17 @@ int term_width(void) {
     return 0;
 }
 
+/* Terminal height in rows, or 0 when unknown. */
+int term_height(void) {
+    if (!isatty(STDOUT_FILENO)) return 0;
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0)
+        return ws.ws_row;
+    const char *lines = getenv("LINES");
+    if (lines) { int v = atoi(lines); if (v > 0) return v; }
+    return 0;
+}
+
 /* ── UTF-8 display width ───────────────────────────────────────────────────── */
 /*
  * Terminal column width of UTF-8 text. We can't use the system wcwidth(): the
@@ -604,6 +615,150 @@ void print_grouped_table(const ColWidths *w, bool dirty_only,
 
     print_separator(w);
     print_summary(dirty_only);   /* counts every repo, independent of collapse */
+}
+
+/* ── Repo branch screen (watch mode) ───────────────────────────────────────── */
+#define BS_UPSTREAM_MAX 32   /* cap so one long upstream doesn't eat the row */
+
+/* Upstream cell: the short upstream name, "gone" when it was deleted on the
+ * remote, or a dash when none is configured. */
+static const char *branch_upstream_str(const BranchInfo *b, const char **color) {
+    if (!b->upstream[0])    { *color = COL_DIM; return "\xe2\x80\x94"; }
+    if (b->upstream_gone)   { *color = COL_RED; return "gone"; }
+    *color = COL_DIM;
+    return b->upstream;
+}
+
+/* Sync cell vs upstream, same glyphs as the repo table; blank without one. */
+static void branch_sync_str(const BranchInfo *b, char *buf, size_t n, const char **color) {
+    buf[0] = '\0';
+    *color = COL_DIM;
+    if (!b->upstream[0] || b->upstream_gone) return;
+    if (b->ahead && b->behind) {
+        *color = COL_MAGENTA;
+        snprintf(buf, n, "\xe2\x86\x91%zu\xe2\x86\x93%zu", b->ahead, b->behind);
+    } else if (b->ahead) {
+        *color = COL_GREEN;
+        snprintf(buf, n, "\xe2\x86\x91%zu", b->ahead);
+    } else if (b->behind) {
+        *color = COL_RED;
+        snprintf(buf, n, "\xe2\x86\x93%zu", b->behind);
+    } else {
+        snprintf(buf, n, "\xe2\x89\xa1");
+    }
+}
+
+/* State cell: the stale reason, or why a branch is exempt from it. */
+static const char *branch_state_str(const BranchInfo *b, const char **color) {
+    if (b->reason == STR_GONE)  { *color = COL_RED;   return "gone (unmerged)"; }
+    if (b->reason != STR_NONE)  { *color = COL_GREEN; return stale_reason_str(b->reason); }
+    *color = COL_DIM;
+    if (b->is_default)   return "default";
+    if (b->is_protected) return "protected";
+    return "";
+}
+
+void print_branch_screen(const char *repo_path, const BranchList *bl,
+                         int cursor, int offset, int visible, const char *note) {
+    const char *name = strrchr(repo_path, '/');
+    name = name ? name + 1 : repo_path;
+
+    const char *head = "";
+    size_t n_stale = 0, n_safe = 0;
+    for (size_t i = 0; i < bl->count; i++) {
+        if (bl->branches[i].is_head) head = bl->branches[i].name;
+        if (bl->branches[i].reason != STR_NONE) n_stale++;
+        if (bl->branches[i].safe_delete)        n_safe++;
+    }
+
+    int tw = term_width();
+    printf("%s%s%s", C(COL_BOLD), name, C(COL_RESET));
+    if (head[0]) printf("  \xc2\xb7  on %s%s%s", C(COL_YELLOW), head, C(COL_RESET));
+    if (bl->default_branch[0])
+        printf("  \xc2\xb7  %sdefault: %s%s", C(COL_DIM), bl->default_branch, C(COL_RESET));
+    printf("%s\n", EOL());
+    printf("%s%s%s%s\n%s\n", C(COL_DIM), tw > 0 ? ellipsize(repo_path, tw - 2) : repo_path,
+           C(COL_RESET), EOL(), EOL());
+
+    /* column widths sized to the content */
+    int w_name = (int)strlen("BRANCH"), w_up = (int)strlen("UPSTREAM");
+    int w_sync = 4, w_time = (int)strlen("LAST COMMIT");
+    for (size_t i = 0; i < bl->count; i++) {
+        const BranchInfo *b = &bl->branches[i];
+        const char *col;
+        char sync[32];
+        w_name = MAX(w_name, utf8_width(b->name));
+        w_up   = MAX(w_up, utf8_width(branch_upstream_str(b, &col)));
+        branch_sync_str(b, sync, sizeof(sync), &col);
+        w_sync = MAX(w_sync, utf8_width(sync));
+        w_time = MAX(w_time, utf8_width(relative_time(b->last_commit)));
+    }
+    if (w_up > BS_UPSTREAM_MAX) w_up = BS_UPSTREAM_MAX;
+    /* lead(2) + head marker(2) + gaps(2 each) + a STATE column of ~15 */
+    if (tw > 0) {
+        int rest = 4 + w_up + 2 + w_sync + 2 + w_time + 2 + 15;
+        if (w_name > tw - rest) w_name = MAX(12, tw - rest);
+    }
+
+    printf("    %s", C(COL_BOLD));
+    write_col("BRANCH", w_name);      printf("  ");
+    write_col("UPSTREAM", w_up);      printf("  ");
+    write_col("SYNC", w_sync);        printf("  ");
+    write_col("LAST COMMIT", w_time); printf("  STATE%s%s\n", C(COL_RESET), EOL());
+
+    if (bl->count == 0)
+        printf("    %s(no local branches)%s%s\n", C(COL_DIM), C(COL_RESET), EOL());
+
+    for (int i = offset; i < offset + visible && (size_t)i < bl->count; i++) {
+        const BranchInfo *b = &bl->branches[i];
+        const char *col;
+        char sync[32];
+
+        if (i == cursor) printf("%s\xe2\x96\xb8%s ", C(COL_GREEN), C(COL_RESET));
+        else             printf("  ");
+        printf("%s%s ", b->is_head ? C(COL_YELLOW) : "", b->is_head ? "*" : " ");
+
+        printf("%s", b->is_head ? "" : C(b->reason != STR_NONE ? COL_CYAN : COL_RESET));
+        write_col(b->name, w_name);
+        printf("%s  ", C(COL_RESET));
+
+        const char *up = branch_upstream_str(b, &col);
+        printf("%s", C(col));
+        write_col(up, w_up);
+        printf("%s  ", C(COL_RESET));
+
+        branch_sync_str(b, sync, sizeof(sync), &col);
+        printf("%s", C(col));
+        write_col(sync, w_sync);
+        printf("%s  %s", C(COL_RESET), C(COL_DIM));
+        write_col(relative_time(b->last_commit), w_time);
+        printf("%s  ", C(COL_RESET));
+
+        const char *state = branch_state_str(b, &col);
+        printf("%s%s%s%s\n", C(col), state, C(COL_RESET), EOL());
+    }
+    if ((size_t)(offset + visible) < bl->count)
+        printf("    %s(%zu more)%s%s\n", C(COL_DIM),
+               bl->count - (size_t)(offset + visible), C(COL_RESET), EOL());
+
+    printf("%s\n", EOL());
+    printf("  %zu branch%s \xc2\xb7 ", bl->count, bl->count == 1 ? "" : "es");
+    if (n_stale)
+        printf("%s%zu stale%s (%zu safe to delete)",
+               C(COL_CYAN), n_stale, C(COL_RESET), n_safe);
+    else
+        printf("%sno stale branches%s", C(COL_GREEN), C(COL_RESET));
+    if (!bl->default_branch[0])
+        printf(" \xc2\xb7 %sno default branch \xe2\x80\x94 merged/squashed undetectable%s",
+               C(COL_DIM), C(COL_RESET));
+    printf("%s\n", EOL());
+
+    printf("  %s\xe2\x86\x91/\xe2\x86\x93%s move \xc2\xb7 %sr%s reload \xc2\xb7 "
+           "%sEsc%s back \xc2\xb7 %sq%s quit%s\n",
+           C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET),
+           C(COL_BOLD), C(COL_RESET), C(COL_BOLD), C(COL_RESET), EOL());
+    if (note && note[0])
+        printf("  %s%s%s%s\n", C(COL_DIM), note, C(COL_RESET), EOL());
 }
 
 /* ── Switch summary ────────────────────────────────────────────────────────── */

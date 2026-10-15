@@ -25,11 +25,19 @@ hardening pass.
 
 ## 0.6.0 — Interactive repo panel
 
-Press `i` with the cursor on a repo to render a detail panel below the table.
+Press `Enter` with the cursor on a repo to open a full-screen branch screen
+(decided 2026-10-15; a full screen instead of a panel below the table, so long
+branch lists fit).
 
 - **v1 (read-only):** list the repo's branches with ahead/behind per branch and
-  a stale marker.
-- **v2 (delete):** delete stale branches from the panel.
+  a stale marker (gone / merged / squashed). *Implemented.*
+- **v2 (delete):** mark branches (`space`, `a` = all safe), `d` deletes after
+  an inline confirmation. Branches that are not safe to delete need an
+  explicit `Y`.
+- The detection core lives in `stale.c` (`repo_branch_list()`), with no
+  global state. It is ported from PR #4. That PR's `stale` subcommand is
+  deliberately not part of 0.6.0, and a CLI can be added later without breaking
+  anything.
 
 Design notes:
 
@@ -41,8 +49,7 @@ Design notes:
 - **Deletion safety:** local branches only (`git_branch_delete`, which refuses
   the current branch). Pause the auto-refresh while the panel is open and
   require an explicit confirmation before deleting.
-- Cursor on a category header → `i` is a no-op (a folder aggregate could come
-  later).
+- `Enter` on a category header still expands/collapses it.
 
 ## 1.0.0 — `--json` output + surface freeze
 
@@ -106,7 +113,7 @@ change.
 
 ## Shared building block
 
-A `repo_stale_branches()` core (libgit2 branch iterator + upstream
+A `repo_branch_list()` core (`stale.c`) (libgit2 branch iterator + upstream
 `gone`/`merged` detection, unit-testable) powers **both** the 0.6.0 panel and
 the 1.0.0 JSON `stale_branches` field. Building the panel first means the stale
 vocabulary and fields are already settled when the JSON schema is frozen — so
