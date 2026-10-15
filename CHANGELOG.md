@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
   Branches with unmerged work need an uppercase `Y`. Only local branches are
   deleted. The checked-out, default and protected branches can't be marked,
   and a branch that moved since the analysis is skipped.
+  While another git process (an IDE's background fetch, say) holds the ref
+  lock, the delete waits up to a second for it, as git itself does.
 - `~/.gitlsrc` key `protected_branches`: branches that are never flagged as
   stale.
 - The watch footer always shows `↑/↓ move · ⏎ branches`.

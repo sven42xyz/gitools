@@ -325,13 +325,15 @@ static bool delete_prompt(const BranchList *bl, const bool *marked, int only,
  */
 static void delete_targets(const char *path, BranchList *bl, bool *marked, int only,
                            char *note, size_t n) {
-    size_t ok = 0, changed = 0, failed = 0, keep = 0;
+    size_t ok = 0, changed = 0, failed = 0, locked = 0, keep = 0;
     for (size_t i = 0; i < bl->count; i++) {
         if (is_target(marked, only, i)) {
-            DeleteResult r = repo_delete_branch(path, &bl->branches[i]);
+            /* once a lock outlasted the wait, don't stall on every remaining branch */
+            DeleteResult r = locked ? DEL_LOCKED : repo_delete_branch(path, &bl->branches[i]);
             if (r == DEL_OK) { ok++; continue; }
-            if (r == DEL_CHANGED) changed++;
-            else                  failed++;
+            if      (r == DEL_CHANGED) changed++;
+            else if (r == DEL_LOCKED)  locked++;
+            else                       failed++;
         }
         bl->branches[keep] = bl->branches[i];
         marked[keep++]     = false;    /* survivors start unmarked */
@@ -343,6 +345,10 @@ static void delete_targets(const char *path, BranchList *bl, bool *marked, int o
         len += snprintf(note + len, n - (size_t)len,
                         " \xc2\xb7 %zu skipped (changed since analysis \xe2\x80\x94 press r)",
                         changed);
+    if (locked && len < (int)n)
+        len += snprintf(note + len, n - (size_t)len,
+                        " \xc2\xb7 %zu not deleted (repository locked by another git process)",
+                        locked);
     if (failed && len < (int)n)
         snprintf(note + len, n - (size_t)len, " \xc2\xb7 %zu failed", failed);
 }
@@ -361,7 +367,7 @@ static void delete_targets(const char *path, BranchList *bl, bool *marked, int o
 static bool run_repo_screen(const char *path) {
     BranchList bl = { 0 };
     bool *marked = NULL;
-    char note[160] = "";
+    char note[256] = "";
     char prompt[320] = "";        /* non-empty while a delete awaits confirmation */
     bool strict = false;          /* the pending delete needs an uppercase Y */
     int  only = -1;               /* pending delete of just this row (nothing marked) */

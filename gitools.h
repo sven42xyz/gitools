@@ -112,6 +112,7 @@ typedef enum {
     DEL_OK = 0,
     DEL_CHANGED,    /* tip moved since the analysis — reload before deleting */
     DEL_REFUSED,    /* checked-out, default or protected branch */
+    DEL_LOCKED,     /* another git process held a ref lock past the timeout */
     DEL_ERROR,
 } DeleteResult;
 

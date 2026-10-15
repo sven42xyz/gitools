@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "gitools.h"
 
@@ -365,15 +366,11 @@ bool branch_safe(const BranchInfo *b) {
 }
 
 /* ── Deletion ──────────────────────────────────────────────────────────────── */
-/*
- * Delete one local branch (never a remote one). Exempt branches are refused.
- * The classification shown to the user was made for b->tip, so the delete is
- * refused when the branch has moved since — new commits would otherwise be
- * dropped unseen.
- */
-DeleteResult repo_delete_branch(const char *path, const BranchInfo *b) {
-    if (branch_exempt_reason(b)) return DEL_REFUSED;
+#define DELETE_LOCK_TIMEOUT_MS 1000   /* git's own core.packedRefsTimeout default */
+#define DELETE_LOCK_STEP_MS      50
 
+/* One delete attempt; *locked is set when another process held a ref lock. */
+static DeleteResult delete_once(const char *path, const BranchInfo *b, bool *locked) {
     git_repository *repo = NULL;
     if (git_repository_open(&repo, path) != 0) return DEL_ERROR;
 
@@ -382,14 +379,47 @@ DeleteResult repo_delete_branch(const char *path, const BranchInfo *b) {
     if (git_branch_lookup(&ref, repo, b->name, GIT_BRANCH_LOCAL) == 0) {
         git_object *obj = NULL;
         if (git_reference_peel(&obj, ref, GIT_OBJECT_COMMIT) == 0) {
-            if (git_oid_cmp(git_object_id(obj), &b->tip) != 0)
+            if (git_oid_cmp(git_object_id(obj), &b->tip) != 0) {
                 res = DEL_CHANGED;
-            else   /* libgit2 also refuses the checked-out branch itself */
-                res = git_branch_delete(ref) == 0 ? DEL_OK : DEL_ERROR;
+            } else {   /* libgit2 also refuses the checked-out branch itself */
+                int rc = git_branch_delete(ref);
+                *locked = rc == GIT_ELOCKED;
+                res = rc == 0 ? DEL_OK : DEL_ERROR;
+            }
             git_object_free(obj);
         }
         git_reference_free(ref);
     }
     git_repository_free(repo);
     return res;
+}
+
+/*
+ * Delete one local branch (never a remote one). Exempt branches are refused.
+ * The classification shown to the user was made for b->tip, so the delete is
+ * refused when the branch has moved since — new commits would otherwise be
+ * dropped unseen.
+ *
+ * Another git process (an IDE's background fetch, a shell prompt) may hold
+ * packed-refs.lock. git itself waits for it; libgit2 fails at once with
+ * GIT_ELOCKED, so retry for a while. Each attempt reopens the repository:
+ * after a failed write libgit2's packed-refs cache already lacks the branch,
+ * and a retry on the same handle would report success without deleting it.
+ */
+DeleteResult repo_delete_branch(const char *path, const BranchInfo *b) {
+    if (branch_exempt_reason(b)) return DEL_REFUSED;
+
+    const struct timespec step = { 0, DELETE_LOCK_STEP_MS * 1000000L };
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;) {
+        bool locked = false;
+        DeleteResult res = delete_once(path, b, &locked);
+        if (!locked) return res;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long waited_ms = (now.tv_sec - start.tv_sec) * 1000
+                       + (now.tv_nsec - start.tv_nsec) / 1000000;
+        if (waited_ms >= DELETE_LOCK_TIMEOUT_MS) return DEL_LOCKED;
+        nanosleep(&step, NULL);
+    }
 }

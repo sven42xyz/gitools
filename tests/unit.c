@@ -216,6 +216,19 @@ static void test_branch_list(void) {
     CHECK("delete removes merged branch", repo_delete_branch(repo, find_branch(&bl, "merged")) == DEL_OK);
     CHECK("deleted branch is gone", repo_delete_branch(repo, find_branch(&bl, "merged")) == DEL_ERROR);
 
+    /* another git process holding packed-refs.lock: wait it out, give up after the timeout */
+    snprintf(cmd, sizeof(cmd), "git -C '%s' pack-refs --all && touch '%s/.git/packed-refs.lock'",
+             repo, repo);
+    CHECK("lock fixture", system(cmd) == 0);
+    CHECK("held lock → DEL_LOCKED", repo_delete_branch(repo, find_branch(&bl, "squash")) == DEL_LOCKED);
+    snprintf(cmd, sizeof(cmd), "git -C '%s' rev-parse -q --verify refs/heads/squash >/dev/null", repo);
+    CHECK("locked branch still exists", system(cmd) == 0);
+    snprintf(cmd, sizeof(cmd), "(sleep 0.3; rm -f '%s/.git/packed-refs.lock') &", repo);
+    CHECK("lock released later", system(cmd) == 0);
+    CHECK("delete waits for a short lock", repo_delete_branch(repo, find_branch(&bl, "squash")) == DEL_OK);
+    snprintf(cmd, sizeof(cmd), "git -C '%s' rev-parse -q --verify refs/heads/squash >/dev/null", repo);
+    CHECK("branch really deleted after the wait", system(cmd) != 0);
+
     branch_list_free(&bl);
     CHECK("missing repo → -1", repo_branch_list("/nonexistent/x", NULL, 0, &bl) == -1);
     git_libgit2_shutdown();
