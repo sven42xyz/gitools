@@ -120,11 +120,40 @@ The picker lists the recently active branches across all repositories, most
 recent first; type to filter, use the arrow keys to move the selection and
 Tab or Enter to choose. Esc cancels.
 .TP
+.BR Up ", " Down
+Move the cursor.
+.TP
+.B Enter
+On a repository, open its branch screen (see below). On a category header,
+expand or collapse it.
+.TP
 .B r
 Refresh now without waiting for the interval.
 .TP
 .BR q ", Ctrl\-C"
 Quit.
+.PP
+The branch screen lists the repository's local branches with their upstream,
+ahead/behind counts and last commit, and flags stale ones:
+.B merged
+(the tip is reachable from the default branch),
+.B squashed
+(the branch's changes match one commit on the default branch) and
+.B gone (unmerged)
+(the upstream was deleted on the remote but the branch has work that is not in
+the default branch). The default branch is the one
+.I origin/HEAD
+points to, or else a local
+.I main
+or
+.IR master .
+The checked\-out branch, the default branch,
+.IR main ", " master
+and branches listed in
+.B protected_branches
+are never flagged. The auto\-refresh pauses while the screen is open;
+.B r
+re\-runs the analysis, Esc or Left returns to the table.
 .PP
 The automatic refresh and the
 .B r
@@ -190,6 +219,12 @@ Maximum directory recursion depth (default: 5).
 .TP
 .B skip_dirs
 Comma\-separated list of directory names to skip; glob patterns are supported.
+.TP
+.B protected_branches
+Comma\-separated list of branches the watch\-mode branch screen never flags as
+stale.
+.IR main ", " master
+and the repository's default branch are always protected.
 .TP
 .B watch_interval
 Default refresh interval in seconds for

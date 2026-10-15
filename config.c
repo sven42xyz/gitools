@@ -6,6 +6,7 @@
  *   default_dir=~/projects
  *   max_depth=3
  *   skip_dirs=build,dist,tmp
+ *   protected_branches=develop,staging
  *   no_color=true
  *
  * Set GITLS_CONFIG=/path/to/file to override the default ~/.gitlsrc path.
@@ -20,6 +21,53 @@
 #include <unistd.h>
 
 #include "gitools.h"
+
+#define MAX_LIST_ITEMS 64
+
+void free_list(char **list, size_t count) {
+    for (size_t i = 0; i < count; i++) free(list[i]);
+    free(list);
+}
+
+/*
+ * Split a comma-separated value into a newly allocated list (capped to avoid
+ * memory exhaustion), trimming surrounding blanks so "a, b" stores "b" rather
+ * than " b". On success the previous list is freed and
+ * replaced; on allocation failure it is left untouched.
+ */
+static void set_list(const char *val, char ***arr, size_t *count) {
+    char *copy = strdup(val);
+    if (!copy) return;
+
+    size_t cap = 1;
+    for (const char *p = copy; *p; p++)
+        if (*p == ',') cap++;
+    if (cap > MAX_LIST_ITEMS) cap = MAX_LIST_ITEMS;
+
+    char **list = malloc(cap * sizeof(char *));
+    if (!list) { free(copy); return; }
+
+    size_t n = 0;
+    for (char *tok = strtok(copy, ","); tok && n < cap; tok = strtok(NULL, ",")) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        char *end = tok + strlen(tok);
+        while (end > tok && (end[-1] == ' ' || end[-1] == '\t')) *--end = '\0';
+        if (*tok == '\0') continue;
+
+        char *dup = strdup(tok);
+        if (!dup) {
+            free_list(list, n);
+            free(copy);
+            return;
+        }
+        list[n++] = dup;
+    }
+    free(copy);
+
+    free_list(*arr, *count);
+    *arr   = list;
+    *count = n;
+}
 
 void load_config(void) {
     char path[PATH_MAX];
@@ -74,42 +122,10 @@ void load_config(void) {
                 opt_max_depth = (int)d;
 
         } else if (strcmp(key, "skip_dirs") == 0) {
-#define MAX_SKIP_DIRS 64
-            /* split comma-separated list (capped to avoid memory exhaustion) */
-            char *copy = strdup(val);
-            if (!copy) continue;
+            set_list(val, &opt_extra_skip, &opt_extra_skip_count);
 
-            size_t count = 1;
-            for (const char *p = copy; *p; p++)
-                if (*p == ',') count++;
-            if (count > MAX_SKIP_DIRS) count = MAX_SKIP_DIRS;
-
-            char **arr = malloc(count * sizeof(char *));
-            if (!arr) { free(copy); continue; }
-
-            size_t idx = 0;
-            char *tok = strtok(copy, ",");
-            while (tok && idx < count) {
-                char *dup = strdup(tok);
-                if (!dup) {
-                    for (size_t i = 0; i < idx; i++) free(arr[i]);
-                    free(arr);
-                    free(copy);
-                    goto next_line;
-                }
-                arr[idx++] = dup;
-                tok = strtok(NULL, ",");
-            }
-
-            /* free any previous list */
-            if (opt_extra_skip) {
-                for (size_t i = 0; i < opt_extra_skip_count; i++)
-                    free(opt_extra_skip[i]);
-                free(opt_extra_skip);
-            }
-            opt_extra_skip       = arr;
-            opt_extra_skip_count = idx;
-            free(copy);
+        } else if (strcmp(key, "protected_branches") == 0) {
+            set_list(val, &opt_protected_branches, &opt_protected_branches_count);
 
         } else if (strcmp(key, "watch_interval") == 0) {
             char *end;
@@ -131,7 +147,6 @@ void load_config(void) {
             if (strcmp(val, "false") == 0 || strcmp(val, "0") == 0)
                 opt_categories = false;
         }
-        next_line: ;   /* jump target for strdup failure in skip_dirs */
     }
 
     fclose(f);

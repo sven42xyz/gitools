@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Watch mode (`-w`): press `Enter` on a repo to open a full-screen **branch
+  screen**. It lists every local branch with its upstream, ahead/behind and last
+  commit, and flags stale branches as `merged`, `squashed` (squash-merge
+  detection via patch-id) or `gone (unmerged)`. The auto-refresh pauses while
+  the screen is open. `r` re-runs the analysis, and `Esc` or `←` returns to the
+  table.
+- `~/.gitlsrc` key `protected_branches`: branches that are never flagged as
+  stale.
+- The watch footer always shows `↑/↓ move · ⏎ branches`.
+
+### Changed
+- `skip_dirs` entries are trimmed, so `skip_dirs=build, dist` now matches
+  `dist`.
+
 ## [0.5.1] - 2026-08-27
 
 Packaging-only release — no changes to `gitls` itself.

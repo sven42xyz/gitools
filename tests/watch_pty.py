@@ -240,8 +240,9 @@ def main():
     check("footer shows keys + interval", "fetch" in first and "interval 5s" in first)
     check("footer omits directory", work not in first.split("interval")[-1])
     check("footer omits 'last scan'", "last scan" not in first)
-    # a/b are top-level repos (no categories) -> no nav hints in the footer
-    check("footer hides nav without categories", "expand" not in first)
+    # a/b are top-level repos (no categories) -> no expand hint in the footer
+    check("footer omits expand without categories", "expand" not in first)
+    check("footer offers the branch screen", "branches" in first)
     tail, status = w.finish()
     check("alternate screen left on quit", "\033[?1049l" in (first + tail))
     check("cursor shown on quit", "\033[?25h" in (first + tail))
@@ -429,6 +430,51 @@ def main():
     # no collapsible categories -> footer drops the nav hints
     check("footer hides nav when categories off", "expand" not in s)
     subprocess.run(["rm", "-rf", nocat])
+
+    # ── 9. Enter on a repo opens its branch screen; Esc returns ──
+    br = tempfile.mkdtemp(prefix="gitls-branches-")
+    repo = os.path.join(br, "proj")
+    make_repo(repo)
+    make_branch(repo, "done", "2024-02-01T00:00:00")
+    git("merge", "-q", "--ff-only", "done", cwd=repo)       # done is now merged
+    with open(os.path.join(repo, "README"), "a") as f:       # main moves on, so done
+        f.write("later\n")                                   # is not just "at the tip"
+    git("add", "README", cwd=repo)
+    commit(repo, "later", "2024-02-15T00:00:00")
+    make_branch(repo, "wip", "2024-03-01T00:00:00")          # unmerged work
+    git("branch", "keep", "done", cwd=repo)                  # merged but protected
+    cfg = os.path.join(br, "gitls.conf")
+    with open(cfg, "w") as f:
+        f.write("protected_branches=develop, keep\n")
+    os.environ["GITLS_CONFIG"] = cfg
+    try:
+        w = Watcher(br)
+        t = Term()
+        t.feed(w.drain(1.2))
+        w.send(b"\x1b[B")                  # select the only repo
+        t.feed(w.drain(0.4))
+        w.send(b"\r")                      # open the branch screen
+        t.feed(w.drain(1.2))
+        scr = t.text()
+        w.send(b"\x1b")                    # Esc back to the table
+        t.feed(w.drain(1.2))
+        back = t.text()
+        _, status = w.finish()
+    finally:
+        del os.environ["GITLS_CONFIG"]
+    check("branch screen shows the default branch", "default: main" in scr)
+    check("branch screen lists every branch",
+          all(n in scr for n in ("done", "wip", "keep", "main")))
+    check("merged branch flagged", "merged" in line_with(scr, " done "))
+    check("unmerged branch not flagged", line_with(scr, " wip ").rstrip().endswith("ago"))
+    check("protected branch exempt", "protected" in line_with(scr, " keep "))
+    check("HEAD sorted first and marked", ordered(scr, ["* main", "done"]))
+    check("summary counts stale", "1 stale (1 safe to delete)" in scr)
+    check("Esc returns to the repo table", "NAME" in back and "BRANCH" in back
+          and "default: main" not in back)
+    check("clean exit from the table after the screen",
+          os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0)
+    subprocess.run(["rm", "-rf", br])
 
     subprocess.run(["rm", "-rf", work])
     print(f"\n{passed} passed, {failed} failed")
